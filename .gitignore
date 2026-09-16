@@ -1,0 +1,36 @@
+# Секреты
+.env
+.env.*
+!.env.example
+
+# Виртуальное окружение Python
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Документы и данные заказчика
+data/incoming/*
+!data/incoming/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# Логи
+*.log
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Внутренняя документация
+docs/private/

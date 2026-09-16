@@ -1,0 +1,7 @@
+services:
+  app:
+    build:
+      context: .
+    container_name: intelligent-knowledge-base-app
+    volumes:
+      - .:/app
