@@ -47,31 +47,32 @@ def bm25_score(question, document_id):
     return score
 
 
-hits_at_1 = 0
-hits_at_3 = 0
+if __name__ == '__main__':
+    hits_at_1 = 0
+    hits_at_3 = 0
 
-for question, expected in questions:
-    scores = [
-        (i, bm25_score(question, i))
-        for i in range(count)
-    ]
+    for question, expected in questions:
+        scores = [
+            (i, bm25_score(question, i))
+            for i in range(count)
+        ]
 
-    # Не показываем документы с нулевым совпадением.
-    ranked = sorted(
-        (item for item in scores if item[1] > 0),
-        key=lambda item: (-item[1], item[0]),
-    )[:3]
+        # Не показываем документы с нулевым совпадением.
+        ranked = sorted(
+            (item for item in scores if item[1] > 0),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
 
-    found = [i for i, score in ranked]
+        found = [i for i, score in ranked]
 
-    hits_at_1 += int(bool(found) and found[0] == expected)
-    hits_at_3 += int(expected in found)
+        hits_at_1 += int(bool(found) and found[0] == expected)
+        hits_at_3 += int(expected in found)
 
-    print("\nВОПРОС:", question)
-    print("ОЖИДАЛСЯ ДОКУМЕНТ:", expected)
-    print("НАЙДЕНО:", found)
-    print("ОЦЕНКИ:", [(i, round(s, 4)) for i, s in ranked])
+        print("\nВОПРОС:", question)
+        print("ОЖИДАЛСЯ ДОКУМЕНТ:", expected)
+        print("НАЙДЕНО:", found)
+        print("ОЦЕНКИ:", [(i, round(s, 4)) for i, s in ranked])
 
-print("\n===== BM25 =====")
-print(f"Hit@1: {hits_at_1}/{len(questions)}")
-print(f"Hit@3: {hits_at_3}/{len(questions)}")
+    print("\n===== BM25 =====")
+    print(f"Hit@1: {hits_at_1}/{len(questions)}")
+    print(f"Hit@3: {hits_at_3}/{len(questions)}")
