@@ -15,6 +15,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from knowledge_base.chunker import Chunk
+from knowledge_base.benchmark_models import BenchmarkCase
 from knowledge_base.embeddings import EmbeddingProvider, embedding_identity
 from knowledge_base.retriever import Retriever
 from knowledge_base.vector_store import InMemoryVectorStore
@@ -22,11 +23,8 @@ from knowledge_base.vector_store import InMemoryVectorStore
 NOTICE = "Это retrieval benchmark, не оценка качества LLM-ответа."
 
 
-@dataclass(frozen=True)
-class GoldQuery:
-    text: str
-    positives: tuple[str, ...]
-    hard_negatives: tuple[str, ...] = ()
+# Backward-compatible public name for the format-independent case model.
+GoldQuery = BenchmarkCase
 
 
 @dataclass(frozen=True)
@@ -49,9 +47,12 @@ def load_inputs(corpus: Path, gold: Path) -> BenchmarkInputs:
     if any(not isinstance(row["text"], str) or not row["text"].strip() for row in rows):
         raise ValueError("Corpus requires nonempty text")
     chunks = tuple(Chunk(
-        document_id=f"chunk-{i}", version_id="snapshot", chunk_index=i,
-        text=row["text"], source_file="", source_format="txt", block_indices=(),
-        page_numbers=(), paragraph_indices=(), section_titles=(),
+        document_id=row.get("document_id", f"chunk-{i}"), version_id="snapshot", chunk_index=i,
+        text=row["text"], source_file=row.get("metadata", {}).get("source_file", ""),
+        source_format="txt", block_indices=(), page_numbers=(), paragraph_indices=(),
+        section_titles=tuple(value for value in (
+            row.get("metadata", {}).get("chapter", ""), row.get("metadata", {}).get("article_title", "")
+        ) if value),
     ) for i, row in enumerate(rows))
     queries = []
     for row in query_rows:
@@ -65,7 +66,9 @@ def load_inputs(corpus: Path, gold: Path) -> BenchmarkInputs:
                 or len(set(negatives)) != len(negatives)
                 or set(positives) & set(negatives)):
             raise ValueError("Invalid gold query or relevance references")
-        queries.append(GoldQuery(row["text"], tuple(positives), tuple(negatives)))
+        queries.append(BenchmarkCase(row["text"], tuple(positives), tuple(negatives),
+                                     row.get("query_id", ""), row.get("difficulty", ""),
+                                     row.get("metadata", {})))
     if not queries:
         raise ValueError("Gold set requires queries")
     return BenchmarkInputs(ids, chunks, tuple(queries), hashlib.sha256(corpus_bytes).hexdigest(),

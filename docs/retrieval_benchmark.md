@@ -36,6 +36,11 @@ dimension выбранной модели. Значение 1536 из `.env.exam
 
 ## Локальные входные файлы
 
+Командные `*_embeddable.csv` и `gold_qa.csv/jsonl` можно подготовить командой
+`scripts/prepare_team_benchmark.py`. Форматы refs, проверка embedding map,
+manifest и команды PowerShell описаны в [Team dataset import](team_benchmark.md).
+CSV остаётся только на границе импорта; runner принимает внутренние JSON snapshots.
+
 Подготовьте два JSON-файла UTF-8. `data/benchmark/` исключён из Git.
 Не нужно читать или копировать закрытые документы для unit-тестов.
 

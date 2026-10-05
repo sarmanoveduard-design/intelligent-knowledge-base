@@ -37,6 +37,19 @@ docs/private/
 
 # Local benchmark inputs and generated reports
 data/benchmark/
+data/corpus/
+data/eval/
+data/datasets/
+data/team/
+datasets/
+/corpus/
+/eval/
+data/corpora/
+data/evaluation/
+**/*_embeddable.csv
+**/*_embedding_map.csv
+**/gold_qa.csv
+**/gold_qa.jsonl
 reports/
 .python-runtime/
 .uv-cache/
