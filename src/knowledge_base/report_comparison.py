@@ -9,11 +9,14 @@ from knowledge_base.benchmark_config import BenchmarkConfigurationError
 
 METRICS = ("Recall@1", "Recall@3", "Recall@5", "Recall@10", "MRR", "nDCG",
            "positive-over-hard-negative", "Candidate Recall@10", "Candidate Recall@20",
-           "Candidate Recall@50", "Candidate Recall@pool", "p50 latency seconds", "p95 latency seconds")
+           "Candidate Recall@50", "Candidate Recall@pool", "p50 latency seconds", "p95 latency seconds",
+           "reranker p50 latency seconds", "reranker p95 latency seconds")
 FIELDS = ("experiment", "status", "provider", "model", "dimensions", "retrieval_mode",
           "document_representation", "candidate_k", "final_top_k", "bm25_k1", "bm25_b", "rrf_k", "reranker",
           *METRICS, "errors", "query_latency_seconds", "index_latency_seconds", "estimated_cost",
-          "commit_sha", "code_dirty")
+          "commit_sha", "code_dirty", "reranker_model", "reranker_device", "reranker_candidate_k",
+          "reranker_batch_size", "reranker_max_length", "reranker_latency_seconds", "hard_negative_scope",
+          "hard_negative_evaluable_query_count", "reranker_requested_revision", "reranker_resolved_revision")
 
 
 def _hash(value):
@@ -72,6 +75,15 @@ def _read_report(directory):
         "commit_sha": metadata.get("code_commit_sha") if isinstance(metadata.get("code_commit_sha"), str)
             and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", metadata["code_commit_sha"]) else None,
         "code_dirty": metadata.get("code_dirty") if type(metadata.get("code_dirty")) is bool else None,
+        "reranker_model": _label(metadata.get("reranker_model")),
+        "reranker_requested_revision": _label(metadata.get("reranker_requested_revision")),
+        "reranker_resolved_revision": metadata.get("reranker_resolved_revision") if isinstance(metadata.get("reranker_resolved_revision"), str)
+            and re.fullmatch(r"[0-9a-f]{40}", metadata["reranker_resolved_revision"]) else None,
+        "reranker_device": metadata.get("reranker_device") if metadata.get("reranker_device") in ("cpu", "cuda", "auto") else None,
+        **{key: _number(metadata.get(key)) for key in ("reranker_candidate_k", "reranker_batch_size",
+            "reranker_max_length", "reranker_latency_seconds", "hard_negative_evaluable_query_count")},
+        "hard_negative_scope": metadata.get("hard_negative_scope") if metadata.get("hard_negative_scope") in (
+            "dense_full_corpus", "bm25_full_corpus", "hybrid_candidate_union", "reranker_candidate_pool") else None,
     })
     if (row["retrieval_mode"] not in ("dense", "bm25", "hybrid_rrf")
             or row["document_representation"] not in ("plain", "structure_aware_v1")):

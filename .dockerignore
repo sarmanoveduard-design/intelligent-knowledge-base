@@ -1,6 +1,13 @@
 .git
 .env
 .venv
+.venv-reranker
+.model-cache
+.python-runtime
+.uv-cache
+reports
+data/benchmark
+data/team
 __pycache__
 *.pyc
 data/incoming

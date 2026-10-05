@@ -198,8 +198,9 @@ error count и опциональный тариф/стоимость. Dirty fla
 Recall@k — macro average доли найденных positives; Top-1 — первый результат
 релевантен; MRR и binary nDCG считаются в пределах top_k (минимум 10).
 Positive-over-hard-negative — лучший positive строго выше лучшего hard negative;
-равные scores считаются неуспехом. Для этого сравнения поиск ранжирует весь
-in-memory corpus. p50/p95 — nearest-rank latency embedding query + полный поиск,
+равные scores считаются неуспехом. Без reranker dense поиск ранжирует весь in-memory corpus.
+С reranker hard-negative сравнивает scores candidate pool; отсутствующий hard negative
+при найденном positive даёт N/A. Scope/count описаны в local_reranker.md. p50/p95 — nearest-rank latency embedding query + полный поиск,
 включая неудачные попытки. Индексация измеряется отдельно, usage включает оба
 этапа. Провайдер без usage получает N/A, а не выдуманное число токенов.
 
@@ -218,3 +219,5 @@ $env:PYTHONPATH='src'
 Официальная документация:
 [Embeddings guide](https://developers.openai.com/api/docs/guides/embeddings),
 [Create embeddings API](https://developers.openai.com/api/reference/resources/embeddings/methods/create).
+
+Optional BGE reranker, изолированный runtime и PowerShell runner: [local_reranker.md](local_reranker.md).

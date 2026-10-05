@@ -18,7 +18,7 @@ from uuid import uuid4
 from knowledge_base.chunker import Chunk
 from knowledge_base.benchmark_models import BenchmarkCase
 from knowledge_base.benchmark_config import RetrievalConfig, validate_code_overrides
-from knowledge_base.candidate_retrieval import CandidateRetriever, Reranker, candidate_metrics, final_candidates
+from knowledge_base.candidate_retrieval import CandidateRetriever, Reranker, candidate_metrics, rerank_candidates
 from knowledge_base.document_representation import document_embedding_text, validate_document_representation
 from knowledge_base.embeddings import EmbeddingProvider, embedding_identity
 from knowledge_base.retriever import Retriever
@@ -140,11 +140,13 @@ def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *
     if reranker_name is not None and (not isinstance(reranker_name, str)
             or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", reranker_name)):
         raise ValueError("Invalid reranker name")
+    if reranker is not None and callable(getattr(reranker, "prepare", None)):
+        reranker.prepare()
     retriever = Retriever(provider, InMemoryVectorStore(dimension=provider.dimension)) if use_dense else None
     candidates = CandidateRetriever(chunks=inputs.chunks, chunk_ids=inputs.chunk_ids,
                                     config=config, dense=retriever, document_texts=embedding_texts)
     before = getattr(provider, "telemetry", {})
-    errors, rows, latencies = [], [], []
+    errors, rows, latencies, reranker_latencies = [], [], [], []
     started = perf_counter()
     indexed = True
     try:
@@ -158,6 +160,7 @@ def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *
     for number, query in enumerate(inputs.queries, 1):
         missing = set(query.positives + query.hard_negatives) - known
         row = {"query_number": number, "status": "ok", "latency_seconds": None,
+               "reranker_latency_seconds": None,
                "retrieved_chunk_numbers": [], "positive-over-hard-negative": None,
                "candidate_pool_size": 0, "candidate_union_size": 0}
         row.update(candidate_metrics([], query.positives, effective_k=candidates.limit, corpus_size=len(inputs.chunks)))
@@ -176,13 +179,26 @@ def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *
                                                  corpus_size=len(inputs.chunks)))
                     row["candidate_pool_size"] = len(pool.candidates)
                     row["candidate_union_size"] = pool.union_size
-                    final = final_candidates(query.text, pool, top_k=top_k, reranker=reranker)
+                    if reranker is not None:
+                        rerank_started = perf_counter()
+                        try:
+                            reranked = rerank_candidates(query.text, pool, reranker=reranker)
+                        finally:
+                            row["reranker_latency_seconds"] = perf_counter() - rerank_started
+                            reranker_latencies.append(row["reranker_latency_seconds"])
+                    else:
+                        reranked = pool.candidates
+                    final = reranked[:top_k]
                     ranked = [c.chunk_id for c in final]
                     row["retrieved_chunk_numbers"] = [c.chunk.chunk_index for c in final]
                     if query.hard_negatives:
-                        scores = pool.diagnostic_scores
-                        row["positive-over-hard-negative"] = float(
-                            max(scores[i] for i in query.positives) > max(scores[i] for i in query.hard_negatives))
+                        scores = {c.chunk_id: c.score for c in reranked} if reranker is not None else pool.diagnostic_scores
+                        positives = [scores[i] for i in query.positives if i in scores]
+                        if not positives:
+                            row["positive-over-hard-negative"] = 0.0
+                        elif all(i in scores for i in query.hard_negatives):
+                            row["positive-over-hard-negative"] = float(
+                                max(positives) > max(scores[i] for i in query.hard_negatives))
                 except Exception:
                     row["status"] = "error"
                     errors.append({"query_number": number, "stage": "query", "code": "retrieval_failed"})
@@ -204,7 +220,9 @@ def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *
     hn = [r["positive-over-hard-negative"] for r in eligible if r["positive-over-hard-negative"] is not None]
     metrics["positive-over-hard-negative"] = sum(hn) / len(hn) if hn else None
     metrics.update({"unresolved refs": unresolved, "p50 latency seconds": _percentile(latencies, .5),
-                    "p95 latency seconds": _percentile(latencies, .95)})
+                    "p95 latency seconds": _percentile(latencies, .95),
+                    "reranker p50 latency seconds": _percentile(reranker_latencies, .5),
+                    "reranker p95 latency seconds": _percentile(reranker_latencies, .95)})
     after = getattr(provider, "telemetry", {})
     usage = {}
     for key in ("total_tokens", "prompt_tokens", "api_calls", "error_count", "latency_seconds"):
@@ -213,14 +231,25 @@ def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *
     tokens = usage["total_tokens"]
     return {
         "experiment": {
-            "schema_version": 2, "provider": identity.provider if identity else None,
+            "schema_version": 3, "provider": identity.provider if identity else None,
             "model_name": identity.model_name if identity else None,
             "retrieval_mode": retrieval_mode, "candidate_k": candidates.limit,
             "candidate_k_requested": candidate_k, "final_top_k": top_k,
             "bm25_k1": 1.5 if retrieval_mode != "dense" else None,
             "bm25_b": .75 if retrieval_mode != "dense" else None,
             "rrf_k": rrf_k if retrieval_mode == "hybrid_rrf" else None,
-            "reranker": reranker_name,
+            "reranker": reranker_name or "none",
+            "reranker_candidate_k": candidates.limit if reranker is not None else None,
+            "reranker_latency_seconds": sum(reranker_latencies) if reranker is not None else None,
+            **{key: getattr(reranker, "metadata", {}).get(key) for key in (
+                "reranker_model", "reranker_device", "reranker_batch_size", "reranker_max_length",
+                "reranker_revision", "reranker_revision_resolved", "reranker_load_latency_seconds",
+                "reranker_requested_revision", "reranker_resolved_revision",
+                "reranker_score_type", "reranker_precision")},
+            "hard_negative_evaluable_query_count": len(hn),
+            "hard_negative_scope": "reranker_candidate_pool" if reranker is not None else (
+                "dense_full_corpus" if retrieval_mode == "dense" else (
+                    "bm25_full_corpus" if retrieval_mode == "bm25" else "hybrid_candidate_union")),
             "document_representation": document_representation,
             "dimensions": identity.dimensions if identity else None,
             "distance_metric": "cosine" if use_dense else None,
@@ -251,7 +280,7 @@ def write_report(result: dict, root: Path = Path("reports")) -> Path:
     (directory / "experiment.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     for filename, rows, fields in (
         ("summary.csv", [{"metric": k, "value": v} for k, v in result["summary"].items()], ["metric", "value"]),
-        ("per_query.csv", result["per_query"], ["query_number", "status", "latency_seconds", "retrieved_chunk_numbers",
+        ("per_query.csv", result["per_query"], ["query_number", "status", "latency_seconds", "reranker_latency_seconds", "retrieved_chunk_numbers",
             "candidate_pool_size", "candidate_union_size", "Candidate Recall@10", "Candidate Recall@20",
             "Candidate Recall@50", "Candidate Recall@pool",
             "Recall@1", "Recall@3", "Recall@5", "Recall@10", "Top-1 accuracy", "MRR", "nDCG", "positive-over-hard-negative"]),
@@ -271,7 +300,9 @@ def write_report(result: dict, root: Path = Path("reports")) -> Path:
                   "Positive-over-hard-negative: best positive score strictly exceeds best hard-negative score; ties fail.",
                   "Candidate Recall is measured before reranking; hybrid pool is the top candidate_k RRF union.",
                   "Candidate Recall@k is N/A when k exceeds the requested pool and unsearched corpus remains.",
-                  "Dense/BM25 hard-negative diagnostics use full-corpus scores; hybrid uses candidate RRF scores (absent=0).",
+                  "Without reranker: dense/BM25 hard-negative diagnostics use full-corpus scores; hybrid uses RRF scores (absent=0).",
+                  "With reranker: hard-negative scores are post-rerank within the full candidate pool, before final top_k truncation.",
+                  "Absent all positives count as zero; absent hard-negative scores otherwise mean N/A, not success.",
                   "Latency includes candidate retrieval and optional reranking; percentiles use nearest rank.",
                   "Token usage covers indexing and queries. N/A means unavailable, not zero.",
                   "Corpus and gold snapshots are identified by SHA-256 of exact input bytes."])

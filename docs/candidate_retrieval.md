@@ -79,12 +79,12 @@ Candidate Recall@pool показывает покрытие всего pool, д�
 а final metrics обнуляются. Unresolved refs исключаются из denominator и делают
 эксперимент incomplete, как раньше. Hard negative score ties считаются неуспехом.
 
-Positive-over-hard-negative — диагностический score показатель до reranker:
+Без reranker Positive-over-hard-negative — диагностический score показатель:
 dense использует full corpus cosine, BM25 — full corpus BM25, hybrid — RRF scores
 candidate union (ref вне обоих component pools имеет score=0). Это различие явно
 зафиксировано в REPORT.md; final recall и candidate recall остаются общими метриками.
 
-Metadata schema_version=2 добавляет retrieval_mode, effective/requested candidate_k,
+Metadata schema_version=3 добавляет retrieval_mode, effective/requested candidate_k,
 final_top_k (legacy top_k также сохранён), bm25_k1/b, rrf_k, reranker и источники code
 metadata. Неприменимые параметры и provider/model/dimensions для bm25-only = null/N/A.
 Index latency записывается отдельно, query latency включает candidate retrieval,
@@ -95,7 +95,7 @@ corpus_hash и gold_set_hash всегда означают исходные snap
 меняют dataset, IDs, refs, metadata или исходные файлы. Отчёты не содержат текстов
 корпуса, query, answer_hint или произвольных сообщений исключений.
 
-## Следующий milestone: reranker
+## Optional reranker
 
 `Reranker` protocol имеет стабильное `name` и метод
 `rerank(query, candidates: tuple[Candidate,...]) -> tuple[Candidate,...]`.
@@ -104,9 +104,12 @@ Candidate содержит исходный chunk_id, исходный Chunk и 
 новый документ, потерять chunk или заменить исходный Chunk. Engine проверяет это,
 потом обрезает ranking до final top_k. Candidate metrics вычислены до вызова.
 
-Будущий адаптер bge-reranker-v2-m3 реализует этот интерфейс и передаётся в
-`run_benchmark(..., reranker=adapter)` из composition boundary. Реальная модель,
-FlagEmbedding/transformers и CLI-загрузка reranker в этом milestone не добавлялись.
+Адаптер `BGEReranker` подключается через этот интерфейс. Default
+`BENCHMARK_RERANKER=none` сохраняет прежнее поведение без torch/transformers.
+При включённом reranker hard-negative использует scores candidate pool после
+reranking; ref вне pool может сделать сравнение N/A. Scope и denominator явно
+записаны в отчёте. Optional runtime, конфигурация и одна команда PowerShell
+описаны в [local_reranker.md](local_reranker.md).
 Reranker не сможет вернуть positive, отсутствующий в pool.
 
 ## Docker metadata без установки git
@@ -118,7 +121,8 @@ BENCHMARK_CODE_COMMIT_SHA и BENCHMARK_CODE_DIRTY из проверенной ho
 определяется автоматически или остаётся N/A. SHA приводится к lowercase.
 `code_commit_sha_source`/`code_dirty_source` = environment_override / git / unavailable.
 Override — заявленная caller provenance, не самостоятельная проверка образа по commit.
-В Docker image не добавляется git; Docker/volumes здесь не менялись и не запускались.
+В Docker image не добавляется git. Основной runtime не меняется;
+optional runtime описан в local_reranker.md.
 
 ## Будущие запуски единым runner
 

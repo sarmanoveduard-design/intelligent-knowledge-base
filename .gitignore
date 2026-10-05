@@ -5,6 +5,8 @@
 
 # Виртуальное окружение Python
 .venv/
+.venv-reranker/
+.model-cache/
 venv/
 
 # Python

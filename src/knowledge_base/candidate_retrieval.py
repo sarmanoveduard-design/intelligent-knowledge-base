@@ -1,5 +1,6 @@
 """Candidate retrieval -> optional reranker -> final top_k, outside Retriever."""
 from dataclasses import dataclass
+from math import isfinite
 from typing import Protocol
 
 from knowledge_base.benchmark_config import RetrievalConfig
@@ -30,17 +31,21 @@ class Reranker(Protocol):
     def rerank(self, query: str, candidates: tuple[Candidate, ...]) -> tuple[Candidate, ...]: ...
 
 
-def final_candidates(query, result: CandidateResult, *, top_k: int, reranker: Reranker | None = None):
+def rerank_candidates(query, result: CandidateResult, *, reranker: Reranker | None = None):
     candidates = result.candidates
     if reranker is not None:
         reordered = tuple(reranker.rerank(query, candidates))
         originals = {c.chunk_id: c for c in candidates}
         if (len(reordered) != len(candidates)
                 or {c.chunk_id for c in reordered} != set(originals)
-                or any(c.chunk is not originals[c.chunk_id].chunk for c in reordered)):
+                or any(c.chunk is not originals[c.chunk_id].chunk or not isfinite(c.score) for c in reordered)):
             raise ValueError("Reranker must reorder the candidate pool without adding or removing chunks")
         candidates = reordered
-    return candidates[:top_k]
+    return candidates
+
+
+def final_candidates(query, result: CandidateResult, *, top_k: int, reranker: Reranker | None = None):
+    return rerank_candidates(query, result, reranker=reranker)[:top_k]
 
 
 class CandidateRetriever:

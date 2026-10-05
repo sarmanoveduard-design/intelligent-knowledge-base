@@ -6,6 +6,7 @@ from pathlib import Path
 from knowledge_base.embedding_config import provider_from_environment
 from knowledge_base.benchmark_config import BenchmarkConfigurationError, config_from_environment
 from knowledge_base.document_representation import DocumentRepresentationError, validate_document_representation
+from knowledge_base.bge_reranker import RerankerRuntimeError, reranker_from_environment
 from knowledge_base.retrieval_benchmark import load_inputs, run_benchmark, write_report
 
 
@@ -25,12 +26,15 @@ def main() -> int:
             os.environ.get("BENCHMARK_DOCUMENT_REPRESENTATION", "plain")
         )
         # Validate inputs before constructing any API-backed provider.
+        reranker = reranker_from_environment()
+        if reranker is not None:
+            reranker.prepare()
         provider = provider_from_environment() if config.retrieval_mode != "bm25" else None
         result = run_benchmark(provider, inputs, top_k=config.top_k, cost_per_million_tokens=cost,
                                document_representation=representation, retrieval_mode=config.retrieval_mode,
-                               candidate_k=config.candidate_k, rrf_k=config.rrf_k)
+                               candidate_k=config.candidate_k, rrf_k=config.rrf_k, reranker=reranker)
         directory = write_report(result)
-    except (DocumentRepresentationError, BenchmarkConfigurationError) as error:
+    except (DocumentRepresentationError, BenchmarkConfigurationError, RerankerRuntimeError) as error:
         print(str(error))
         return 1
     except Exception:
