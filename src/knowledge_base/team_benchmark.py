@@ -161,6 +161,50 @@ def _refs(value: object, default_document: str, *, row: int) -> tuple[str, ...]:
     return tuple(sorted(refs))
 
 
+def _hard_negatives(row: dict, default: str, *, number: int) -> tuple[str, ...]:
+    aggregate_columns = ("hard_negative_refs", "hard_negative_section_refs")
+    singular_columns = ("hard_negative_document_id", "hard_negative_section_ref")
+    numbered_columns = {
+        f"hard_negative_{slot}_{field}" for slot in range(1, 4)
+        for field in ("document_id", "section_ref")
+    }
+    supported = set(aggregate_columns + singular_columns) | numbered_columns
+    if any("negative" in key.lower() and key not in supported and value
+           for key, value in row.items()):
+        raise TeamDatasetError("unsupported_hard_negative_column", row=number)
+
+    def cell(key: str) -> str:
+        value = row.get(key, "")
+        if not isinstance(value, str):
+            raise TeamDatasetError("invalid_hard_negative_pair", row=number)
+        return value.strip()
+
+    numbered = []
+    for slot in range(1, 4):
+        document = cell(f"hard_negative_{slot}_document_id")
+        section = cell(f"hard_negative_{slot}_section_ref")
+        if bool(document) != bool(section):
+            raise TeamDatasetError("incomplete_hard_negative_pair", row=number)
+        if document:
+            numbered.append({"document_id": document, "section_ref": section})
+    aggregate = [key for key in aggregate_columns
+                 if row.get(key) and (not isinstance(row[key], str) or row[key].strip())]
+    singular_document, singular_section = (cell(key) for key in singular_columns)
+    if (len(aggregate) > 1 or (aggregate and (singular_document or singular_section))
+            or (numbered and (aggregate or singular_document or singular_section))):
+        raise TeamDatasetError("ambiguous_hard_negative_columns", row=number)
+    if numbered:
+        return _refs(numbered, default, row=number)
+    if aggregate:
+        return _refs(row[aggregate[0]], default, row=number)
+    if singular_section:
+        return _refs([{"document_id": singular_document or default,
+                       "section_ref": singular_section}], default, row=number)
+    if singular_document:
+        raise TeamDatasetError("missing_hard_negative_section_ref", row=number)
+    return ()
+
+
 class TeamGoldAdapter:
     def load(self, path: Path, corpus: Iterable[CorpusChunk]) -> tuple[BenchmarkCase, ...]:
         return self.from_source(path.suffix.lower(), path.read_bytes(), corpus)
@@ -207,22 +251,7 @@ class TeamGoldAdapter:
             positives = _refs(row["positive_refs"], default, row=number) if "positive_refs" in row else primary
             if not positives:
                 raise TeamDatasetError("empty_positive_refs", row=number)
-            supported_negative_columns = {"hard_negative_refs", "hard_negative_section_refs",
-                                          "hard_negative_section_ref", "hard_negative_document_id"}
-            if any("negative" in key.lower() and key not in supported_negative_columns and value
-                   for key, value in row.items()):
-                raise TeamDatasetError("unsupported_hard_negative_column", row=number)
-            negative_columns = [key for key in ("hard_negative_refs", "hard_negative_section_refs") if row.get(key)]
-            if len(negative_columns) > 1:
-                raise TeamDatasetError("ambiguous_hard_negative_columns", row=number)
-            negatives = _refs(row[negative_columns[0]], default, row=number) if negative_columns else ()
-            if row.get("hard_negative_section_ref"):
-                if negatives:
-                    raise TeamDatasetError("ambiguous_hard_negative_columns", row=number)
-                negatives = _refs([{"document_id": row.get("hard_negative_document_id") or default,
-                                    "section_ref": row["hard_negative_section_ref"]}], default, row=number)
-            elif row.get("hard_negative_document_id"):
-                raise TeamDatasetError("missing_hard_negative_section_ref", row=number)
+            negatives = _hard_negatives(row, default, number=number)
             if set(positives) & set(negatives):
                 raise TeamDatasetError("positive_hard_negative_overlap", row=number)
             missing = (set(positives) | set(negatives) | set(primary)) - known
@@ -245,14 +274,32 @@ def _validate_maps(sources: dict[str, bytes], chunks: tuple[CorpusChunk, ...]) -
     by_document: dict[str, set[str]] = {}
     for item in chunks:
         by_document.setdefault(item.document_id, set()).add(item.section_ref)
-    for name, raw in sources.items():
+    identities = set()
+    for name, raw in sorted(sources.items()):
         document = extract_document_id(name, "_embedding_map.csv")
-        rows = _csv_rows(raw, {"section_ref"})
-        refs = {row["section_ref"].strip() for row in rows}
-        if "" in refs or document not in by_document or refs != by_document[document]:
+        rows = _csv_rows(raw, {"section_ref", "chapter", "article_title", "embedded", "point_id", "covered_by"})
+        embedded_refs, covered_refs = set(), []
+        for number, row in enumerate(rows, 2):
+            ref = row["section_ref"].strip()
+            if not ref:
+                raise TeamDatasetError("empty_embedding_map_section_ref", row=number)
+            if (document, ref) in identities:
+                raise TeamDatasetError("duplicate_embedding_map_section_ref", row=number)
+            identities.add((document, ref))
+            if "document_id" in row and row["document_id"].strip() != document:
+                raise TeamDatasetError("embedding_map_document_mismatch", row=number)
+            embedded = row["embedded"].strip().casefold()
+            if embedded not in ("да", "нет"):
+                raise TeamDatasetError("invalid_embedding_map_embedded", row=number)
+            if embedded == "да":
+                embedded_refs.add(ref)
+            elif row["covered_by"].strip():
+                covered_refs.append((number, row["covered_by"].strip()))
+        if document not in by_document or embedded_refs != by_document[document]:
             raise TeamDatasetError("embedding_map_coverage_mismatch")
-        if any("document_id" in row and row["document_id"].strip() != document for row in rows):
-            raise TeamDatasetError("embedding_map_document_mismatch")
+        for number, target in covered_refs:
+            if target not in embedded_refs:
+                raise TeamDatasetError("invalid_embedding_map_covered_by", row=number)
 
 
 def prepare_team_benchmark(corpus_dir: Path, gold: Path, out: Path) -> dict:

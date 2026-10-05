@@ -36,6 +36,26 @@ def gold_row(**changes):
     return row
 
 
+TEAM_GOLD_HEADER = (
+    "query_id;query;difficulty;answer_hint;document_id;section_ref;"
+    "hard_negative_1_document_id;hard_negative_1_section_ref;"
+    "hard_negative_2_document_id;hard_negative_2_section_ref;"
+    "hard_negative_3_document_id;hard_negative_3_section_ref;source_document"
+)
+
+
+def numbered_gold_row(**changes):
+    row = dict.fromkeys(TEAM_GOLD_HEADER.split(";"), "")
+    row.update({key: value for key, value in gold_row().items() if key in row})
+    row.update(changes)
+    return row
+
+
+def map_row(ref, embedded="да", covered_by=""):
+    return {"section_ref": ref, "chapter": "Synthetic chapter", "article_title": "Synthetic title",
+            "embedded": embedded, "point_id": "", "covered_by": covered_by}
+
+
 class TeamAdapterTests(unittest.TestCase):
     def setUp(self):
         self.sources = {"law(doc_0026)_embeddable.csv": csv_bytes(corpus_rows("s1", "s2")),
@@ -262,12 +282,74 @@ class TeamPreparationTests(unittest.TestCase):
 
     def test_map_coverage_and_manifest(self):
         path = self.source / "law(doc_0026)_embedding_map.csv"
-        path.write_bytes(csv_bytes([{"section_ref": "s1"}, {"section_ref": "s2"}]))
+        path.write_bytes(csv_bytes([map_row("s1"), map_row("s2")]))
         manifest = self.prepare()
         self.assertEqual(manifest["embedding_map_csv_count"], 1)
         self.assertEqual(manifest["source_csv_count"], 4)
-        path.write_bytes(csv_bytes([{"section_ref": "s1"}]))
+        path.write_bytes(csv_bytes([map_row("s1")]))
         with self.assertRaisesRegex(TeamDatasetError, "coverage_mismatch"):
+            self.prepare()
+
+    def test_real_map_structural_refs_do_not_create_chunks(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        rows = [map_row("covered_parent", "нет", "s1"), map_row("oversized_parent", "нет"),
+                map_row("s1", "да"), map_row("s2", "да")]
+        path.write_bytes(csv_bytes(rows, delimiter=";"))
+        manifest = self.prepare()
+        chunks = json.loads((self.out / "corpus.json").read_bytes())["chunks"]
+        self.assertEqual(manifest["chunk_count"], 3)
+        self.assertEqual({row["section_ref"] for row in chunks}, {"s1", "s2"})
+        self.assertEqual(len(chunks), 3)  # same s1 in a second document is allowed
+
+    def test_map_embedded_normalizes_case_and_outer_whitespace(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        path.write_bytes(csv_bytes([map_row("s1", " ДА "), map_row("s2", "да"),
+                                   map_row("parent", " НеТ ", " s2 ")]))
+        self.assertEqual(self.prepare()["chunk_count"], 3)
+
+    def test_map_unknown_embedded_values_rejected(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        for value in ("", "yes", "no", "true", "1", "да/нет"):
+            with self.subTest(value=value):
+                path.write_bytes(csv_bytes([map_row("s1", value), map_row("s2")]))
+                with self.assertRaisesRegex(TeamDatasetError, "invalid_embedding_map_embedded"):
+                    self.prepare()
+
+    def test_map_duplicate_refs_rejected_including_nonembedded(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        for extras in ([map_row(" s1 ", "нет")], [map_row("parent", "нет"), map_row("parent", "нет")]):
+            path.write_bytes(csv_bytes([map_row("s1"), map_row("s2")] + extras))
+            with self.assertRaisesRegex(TeamDatasetError, "duplicate_embedding_map_section_ref"):
+                self.prepare()
+
+    def test_map_covered_by_requires_embedded_target_in_same_document(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        for target in ("absent", "parent", "other_parent", "doc_0030:s1"):
+            with self.subTest(target=target):
+                path.write_bytes(csv_bytes([map_row("s1"), map_row("s2"),
+                                           map_row("parent", "нет", target), map_row("other_parent", "нет")]))
+                with self.assertRaisesRegex(TeamDatasetError, "invalid_embedding_map_covered_by"):
+                    self.prepare()
+        self.assertFalse(self.out.exists())
+
+    def test_map_cannot_cover_ref_only_embedded_in_other_document(self):
+        (self.source / "law(doc_0030)_embeddable.csv").write_bytes(csv_bytes(corpus_rows("s1", "foreign")))
+        (self.source / "law(doc_0026)_embedding_map.csv").write_bytes(csv_bytes(
+            [map_row("s1"), map_row("s2"), map_row("parent", "нет", "foreign")]))
+        with self.assertRaisesRegex(TeamDatasetError, "invalid_embedding_map_covered_by"):
+            self.prepare()
+
+    def test_map_embedded_set_must_match_corpus_exactly(self):
+        path = self.source / "law(doc_0026)_embedding_map.csv"
+        for rows in ([map_row("s1"), map_row("s2", "нет")],
+                     [map_row("s1"), map_row("s2"), map_row("extra")]):
+            path.write_bytes(csv_bytes(rows))
+            with self.assertRaisesRegex(TeamDatasetError, "coverage_mismatch"):
+                self.prepare()
+
+    def test_map_requires_real_columns(self):
+        (self.source / "law(doc_0026)_embedding_map.csv").write_bytes(csv_bytes([{"section_ref": "s1"}]))
+        with self.assertRaisesRegex(TeamDatasetError, "missing_or_duplicate_csv_columns"):
             self.prepare()
 
     def test_jsonl_preparation_and_loader_compatibility(self):
@@ -308,6 +390,89 @@ class TeamPreparationTests(unittest.TestCase):
             self.assertEqual(main(), 1)
             self.assertIn("unresolved_refs", output.getvalue())
             self.assertNotIn(str(self.root), output.getvalue())
+
+
+class TeamNumberedGoldTests(unittest.TestCase):
+    def setUp(self):
+        self.corpus = TeamCorpusAdapter().from_sources({
+            "(doc_0026)_embeddable.csv": csv_bytes(corpus_rows("s1", "s2")),
+            "(doc_0030)_embeddable.csv": csv_bytes(corpus_rows("s1")),
+            "(doc_0040)_embeddable.csv": csv_bytes(corpus_rows("s1")),
+        })
+
+    def parse(self, row):
+        raw = csv_bytes([row], delimiter=";")
+        # Assert the exact real header, not only an equivalent set of field names.
+        self.assertEqual(raw.decode("utf-8-sig").splitlines()[0], TEAM_GOLD_HEADER)
+        return TeamGoldAdapter().from_source(".csv", raw, self.corpus)[0]
+
+    def test_real_header_supports_zero_to_three_hard_negatives(self):
+        refs = [("doc_0026", "s2"), ("doc_0030", "s1"), ("doc_0040", "s1")]
+        for count in range(4):
+            row = numbered_gold_row()
+            for slot, (document, section) in enumerate(refs[:count], 1):
+                row[f"hard_negative_{slot}_document_id"] = document
+                row[f"hard_negative_{slot}_section_ref"] = section
+            with self.subTest(count=count):
+                case = self.parse(row)
+                self.assertEqual(set(case.hard_negatives), {chunk_id(doc, ref) for doc, ref in refs[:count]})
+                self.assertEqual(case.metadata["answer_hint"], "HINT_ONLY_NOT_RETRIEVAL")
+                self.assertNotIn("HINT_ONLY_NOT_RETRIEVAL", case.text)
+
+    def test_half_filled_numbered_pair_rejected_for_each_slot(self):
+        for slot in range(1, 4):
+            for field, value in (("document_id", "doc_0030"), ("section_ref", "s1")):
+                with self.subTest(slot=slot, field=field):
+                    row = numbered_gold_row(**{f"hard_negative_{slot}_{field}": value})
+                    with self.assertRaisesRegex(TeamDatasetError, "incomplete_hard_negative_pair"):
+                        self.parse(row)
+
+    def test_blank_pairs_and_noncontiguous_slots(self):
+        row = numbered_gold_row(hard_negative_1_document_id=" ", hard_negative_1_section_ref=" ",
+                                hard_negative_3_document_id=" doc_0030 ", hard_negative_3_section_ref=" s1 ")
+        self.assertEqual(self.parse(row).hard_negatives, (chunk_id("doc_0030", "s1"),))
+
+    def test_numbered_duplicate_refs_rejected(self):
+        row = numbered_gold_row(hard_negative_1_document_id="doc_0030", hard_negative_1_section_ref="s1",
+                                hard_negative_3_document_id="doc_0030", hard_negative_3_section_ref=" s1 ")
+        with self.assertRaisesRegex(TeamDatasetError, "duplicate_ref"):
+            self.parse(row)
+
+    def test_numbered_positive_overlap_rejected(self):
+        row = numbered_gold_row(hard_negative_1_document_id="doc_0026", hard_negative_1_section_ref="s1")
+        with self.assertRaisesRegex(TeamDatasetError, "positive_hard_negative_overlap"):
+            self.parse(row)
+
+    def test_numbered_refs_must_exist(self):
+        for document, section in (("doc_0030", "missing"), ("doc_9999", "s1")):
+            with self.subTest(document=document):
+                row = numbered_gold_row(hard_negative_2_document_id=document, hard_negative_2_section_ref=section)
+                with self.assertRaisesRegex(TeamDatasetError, "unresolved_refs"):
+                    self.parse(row)
+
+    def test_numbered_document_id_format(self):
+        row = numbered_gold_row(hard_negative_1_document_id="doc_30", hard_negative_1_section_ref="s1")
+        with self.assertRaisesRegex(TeamDatasetError, "invalid_document_id"):
+            self.parse(row)
+
+    def test_aggregate_and_numbered_are_ambiguous(self):
+        for aggregate in ("hard_negative_refs", "hard_negative_section_refs"):
+            row = numbered_gold_row(hard_negative_1_document_id="doc_0030", hard_negative_1_section_ref="s1")
+            row[aggregate] = "doc_0040:s1"
+            with self.subTest(aggregate=aggregate), self.assertRaisesRegex(TeamDatasetError, "ambiguous_hard_negative_columns"):
+                TeamGoldAdapter().from_source(".csv", csv_bytes([row], delimiter=";"), self.corpus)
+
+    def test_aggregate_format_with_blank_numbered_columns_remains_supported(self):
+        row = numbered_gold_row()
+        row["hard_negative_refs"] = "doc_0030:s1"
+        case = TeamGoldAdapter().from_source(".csv", csv_bytes([row], delimiter=";"), self.corpus)[0]
+        self.assertEqual(case.hard_negatives, (chunk_id("doc_0030", "s1"),))
+
+    def test_numbered_format_with_blank_aggregate_remains_supported(self):
+        row = numbered_gold_row(hard_negative_1_document_id="doc_0030", hard_negative_1_section_ref="s1")
+        row["hard_negative_refs"] = "  "
+        case = TeamGoldAdapter().from_source(".csv", csv_bytes([row], delimiter=";"), self.corpus)[0]
+        self.assertEqual(case.hard_negatives, (chunk_id("doc_0030", "s1"),))
 
 
 if __name__ == "__main__":

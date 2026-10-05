@@ -71,13 +71,24 @@ chunk_id = document_id + `:` + SHA-256 canonical JSON пары [document_id, sec
 (включая разные файлы одного документа) запрещён. Совпадающие section_ref
 в разных документах допустимы и дают разные chunk IDs.
 
-Если найдены `*_embedding_map.csv`, каждый должен иметь колонку `section_ref`
-и document_id в имени по тем же правилам. Множество его refs должно точно
-совпасть с refs соответствующего документа в корпусе. Повторы map refs
-допустимы; отсутствующие/лишние refs или документ вне корпуса вызывают ошибку.
-Дополнительные map-колонки не используются для retrieval; `document_id`,
-если указан, также проверяется. Если схема командного map отличается,
-нужно явно расширить адаптер; покрытие не угадывается из произвольных колонок.
+Если найдены `*_embedding_map.csv`, каждый должен иметь командные колонки:
+`section_ref`, `chapter`, `article_title`, `embedded`, `point_id`, `covered_by`
+и document_id в имени по тем же правилам. Map содержит все структурные refs,
+а embeddable.csv — только выбранные для embeddings фрагменты.
+
+`embedded` принимает только русские `да`/`нет`: краевые пробелы удаляются,
+регистр не учитывается (например, ` ДА ` допустимо). Пустое значение,
+английские yes/no, true/false и числа не допускаются. Множество refs map с
+`embedded=да` должно точно совпасть с corpus refs соответствующего документа.
+Повторы section_ref в map запрещены, включая строки `embedded=нет`.
+
+Строки `embedded=нет` не создают CorpusChunk. Их непустой `covered_by` должен
+содержать section_ref строки `embedded=да` того же документа; порядок строк
+не важен. Ссылка на отсутствующий ref, неиндексируемую строку или другой
+документ запрещена. `covered_by` без document_id задаёт локальный ref.
+Пустой covered_by допустим: это oversized parent, разложенный на детей.
+`chapter`, `article_title` и `point_id` map не добавляются в retrieval text;
+необязательный `document_id`, если указан, также проверяется.
 При отсутствии map импорт разрешён, а embedding_map_csv_count равен 0.
 
 ## Gold CSV
@@ -110,6 +121,25 @@ hard negative: `hard_negative_document_id` + `hard_negative_section_ref`;
 без первого используется document_id строки. Одновременные заполненные
 форматы неоднозначны и запрещены. Неизвестные заполненные колонки с `negative`
 в названии вызывают ошибку, чтобы ссылки не пропали молча.
+
+Фактический командный gold CSV поддерживается с точным заголовком:
+
+```csv
+query_id;query;difficulty;answer_hint;document_id;section_ref;hard_negative_1_document_id;hard_negative_1_section_ref;hard_negative_2_document_id;hard_negative_2_section_ref;hard_negative_3_document_id;hard_negative_3_section_ref;source_document
+```
+
+Три numbered-пары задают от 0 до 3 hard negatives. Каждая пара либо полностью
+пустая, либо содержит оба значения document_id и section_ref. Краевые пробелы
+удаляются; заполнение половины пары — ошибка, document_id positive не
+подставляется автоматически. Пустые промежуточные пары допустимы.
+Для всех refs проверяются формат document_id, существование в corpus,
+duplicates и отсутствие пересечения с positives.
+
+Если одновременно заполнены numbered-пары и aggregate-формат
+(`hard_negative_refs` / `hard_negative_section_refs`), импорт завершается
+ошибкой ambiguous. Numbered-пары также нельзя смешивать с прежней отдельной
+singular-парой. Пустые колонки альтернативного формата не мешают импорту;
+поддержка прежних aggregate CSV/JSONL сохранена.
 
 В CSV JSON-массивы должны быть оформлены стандартными CSV-кавычками
 (удвоенные кавычки внутри поля). Hard negatives необязательны.
