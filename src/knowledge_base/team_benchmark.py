@@ -62,13 +62,22 @@ def _csv_rows(raw: bytes, required: set[str]) -> list[dict[str, str]]:
         text = raw.decode("utf-8-sig")
     except UnicodeError:
         raise TeamDatasetError("csv_requires_utf8") from None
-    sample = text[:8192]
+    # Team headers occupy one physical line. Never sniff a truncated quoted body.
+    header = io.StringIO(text, newline="").readline()
+    candidates = []
+    for delimiter in (";", ",", "\t"):
+        try:
+            fields = next(csv.reader([header], delimiter=delimiter, strict=True), [])
+        except csv.Error:
+            continue
+        if fields and len(set(fields)) == len(fields) and required.issubset(fields):
+            candidates.append(delimiter)
+    if not candidates:
+        raise TeamDatasetError("missing_or_duplicate_csv_columns")
+    if len(candidates) > 1:
+        raise TeamDatasetError("ambiguous_csv_delimiter")
     try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-    except csv.Error:
-        dialect = csv.excel
-    try:
-        reader = csv.DictReader(io.StringIO(text, newline=""), dialect=dialect, strict=True)
+        reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=candidates[0], strict=True)
         fields = reader.fieldnames
         if not fields or len(set(fields)) != len(fields) or not required.issubset(fields):
             raise TeamDatasetError("missing_or_duplicate_csv_columns")
