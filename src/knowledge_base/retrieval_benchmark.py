@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -16,6 +17,8 @@ from uuid import uuid4
 
 from knowledge_base.chunker import Chunk
 from knowledge_base.benchmark_models import BenchmarkCase
+from knowledge_base.benchmark_config import RetrievalConfig, validate_code_overrides
+from knowledge_base.candidate_retrieval import CandidateRetriever, Reranker, candidate_metrics, final_candidates
 from knowledge_base.document_representation import document_embedding_text, validate_document_representation
 from knowledge_base.embeddings import EmbeddingProvider, embedding_identity
 from knowledge_base.retriever import Retriever
@@ -94,21 +97,29 @@ def _percentile(values: list[float], fraction: float) -> float | None:
 
 
 def code_revision() -> tuple[str | None, bool | None]:
+    sha_override, dirty_override = validate_code_overrides()
+    if sha_override is not None and dirty_override is not None:
+        return sha_override, dirty_override
     root = Path(__file__).resolve().parents[2]
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
                              text=True, check=True).stdout.strip()
         dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root,
                                     capture_output=True, text=True, check=True).stdout)
-        return (sha if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None), dirty
+        sha = sha if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sha) else None
     except (OSError, subprocess.SubprocessError):
-        return None, None
+        sha, dirty = None, None
+    return (sha_override if sha_override is not None else sha,
+            dirty_override if dirty_override is not None else dirty)
 
 
-def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k: int = 10,
+def run_benchmark(provider: EmbeddingProvider | None, inputs: BenchmarkInputs, *, top_k: int = 10,
                   cost_per_million_tokens: float | None = None,
-                  document_representation: str = "plain") -> dict:
+                  document_representation: str = "plain", retrieval_mode: str = "dense",
+                  candidate_k: int = 50, rrf_k: int = 60, reranker: Reranker | None = None) -> dict:
+    config = RetrievalConfig(retrieval_mode, candidate_k, rrf_k, top_k)
     validate_document_representation(document_representation)
+    sha, dirty = code_revision()  # validate overrides before any embeddings
     if type(top_k) is not int or top_k < 10:
         raise ValueError("top_k must be at least 10 for Recall@10")
     if cost_per_million_tokens is not None and (not isfinite(cost_per_million_tokens) or cost_per_million_tokens < 0):
@@ -121,20 +132,23 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
             chunk.text, inputs.document_metadata[i] if inputs.document_metadata else {},
             mode=document_representation,
         ) for i, chunk in enumerate(inputs.chunks))
-    identity = embedding_identity(provider)
-    retriever = Retriever(provider, InMemoryVectorStore(dimension=provider.dimension))
+    use_dense = retrieval_mode != "bm25"
+    if use_dense and provider is None:
+        raise ValueError("Dense retrieval requires an embedding provider")
+    identity = embedding_identity(provider) if use_dense else None
+    reranker_name = reranker.name if reranker is not None else None
+    if reranker_name is not None and (not isinstance(reranker_name, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", reranker_name)):
+        raise ValueError("Invalid reranker name")
+    retriever = Retriever(provider, InMemoryVectorStore(dimension=provider.dimension)) if use_dense else None
+    candidates = CandidateRetriever(chunks=inputs.chunks, chunk_ids=inputs.chunk_ids,
+                                    config=config, dense=retriever, document_texts=embedding_texts)
     before = getattr(provider, "telemetry", {})
     errors, rows, latencies = [], [], []
     started = perf_counter()
     indexed = True
     try:
-        if embedding_texts is None:
-            # Keep the old indexing path byte-for-byte for the default baseline.
-            retriever.index_chunks(inputs.chunks)
-        elif inputs.chunks:
-            # Store original chunks; only the document embedding input is transformed.
-            vectors = provider.embed_texts(embedding_texts)
-            retriever.vector_store.add_many(inputs.chunks, vectors)
+        candidates.index()
     except Exception:
         indexed = False
         errors.append({"query_number": None, "stage": "index", "code": "embedding_index_failed"})
@@ -144,7 +158,9 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
     for number, query in enumerate(inputs.queries, 1):
         missing = set(query.positives + query.hard_negatives) - known
         row = {"query_number": number, "status": "ok", "latency_seconds": None,
-               "retrieved_chunk_numbers": [], "positive-over-hard-negative": None}
+               "retrieved_chunk_numbers": [], "positive-over-hard-negative": None,
+               "candidate_pool_size": 0, "candidate_union_size": 0}
+        row.update(candidate_metrics([], query.positives, effective_k=candidates.limit, corpus_size=len(inputs.chunks)))
         if missing:
             unresolved += len(missing)
             row["status"] = "unresolved_refs"
@@ -154,13 +170,17 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
             if indexed:
                 started = perf_counter()
                 try:
-                    # Full ranking also evaluates hard negatives outside top_k.
-                    results = retriever.search(query.text, top_k=max(top_k, len(inputs.chunks)))
-                    full = [inputs.chunk_ids[r.chunk.chunk_index] for r in results]
-                    ranked = full[:top_k]
-                    row["retrieved_chunk_numbers"] = [r.chunk.chunk_index for r in results[:top_k]]
+                    pool = candidates.retrieve(query.text)
+                    pool_ids = [c.chunk_id for c in pool.candidates]
+                    row.update(candidate_metrics(pool_ids, query.positives, effective_k=candidates.limit,
+                                                 corpus_size=len(inputs.chunks)))
+                    row["candidate_pool_size"] = len(pool.candidates)
+                    row["candidate_union_size"] = pool.union_size
+                    final = final_candidates(query.text, pool, top_k=top_k, reranker=reranker)
+                    ranked = [c.chunk_id for c in final]
+                    row["retrieved_chunk_numbers"] = [c.chunk.chunk_index for c in final]
                     if query.hard_negatives:
-                        scores = {inputs.chunk_ids[r.chunk.chunk_index]: r.score for r in results}
+                        scores = pool.diagnostic_scores
                         row["positive-over-hard-negative"] = float(
                             max(scores[i] for i in query.positives) > max(scores[i] for i in query.hard_negatives))
                 except Exception:
@@ -178,6 +198,9 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
     eligible = [row for row in rows if row["status"] != "unresolved_refs"]
     metrics = {key: sum(row[key] for row in eligible) / len(eligible) if eligible else None
                for key in ranking_metrics([], ("placeholder",))}
+    for key in candidate_metrics([], ("placeholder",), effective_k=candidates.limit, corpus_size=len(inputs.chunks)):
+        values = [row[key] for row in eligible if row[key] is not None]
+        metrics[key] = sum(values) / len(values) if values else None
     hn = [r["positive-over-hard-negative"] for r in eligible if r["positive-over-hard-negative"] is not None]
     metrics["positive-over-hard-negative"] = sum(hn) / len(hn) if hn else None
     metrics.update({"unresolved refs": unresolved, "p50 latency seconds": _percentile(latencies, .5),
@@ -188,16 +211,25 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
         value = after.get(key)
         usage[key] = value - (before.get(key) or 0) if isinstance(value, (int, float)) else None
     tokens = usage["total_tokens"]
-    sha, dirty = code_revision()
     return {
         "experiment": {
-            "schema_version": 1, "provider": identity.provider, "model_name": identity.model_name,
+            "schema_version": 2, "provider": identity.provider if identity else None,
+            "model_name": identity.model_name if identity else None,
+            "retrieval_mode": retrieval_mode, "candidate_k": candidates.limit,
+            "candidate_k_requested": candidate_k, "final_top_k": top_k,
+            "bm25_k1": 1.5 if retrieval_mode != "dense" else None,
+            "bm25_b": .75 if retrieval_mode != "dense" else None,
+            "rrf_k": rrf_k if retrieval_mode == "hybrid_rrf" else None,
+            "reranker": reranker_name,
             "document_representation": document_representation,
-            "dimensions": identity.dimensions, "distance_metric": "cosine",
-            "normalization": "cosine norm division at search; stored vectors unchanged",
+            "dimensions": identity.dimensions if identity else None,
+            "distance_metric": "cosine" if use_dense else None,
+            "normalization": "cosine norm division at search; stored vectors unchanged" if use_dense else None,
             "corpus_hash": inputs.corpus_hash, "gold_set_hash": inputs.gold_hash,
             "top_k": top_k, "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "python_version": platform.python_version(), "code_commit_sha": sha, "code_dirty": dirty,
+            "code_commit_sha_source": "environment_override" if "BENCHMARK_CODE_COMMIT_SHA" in os.environ else ("git" if sha else "unavailable"),
+            "code_dirty_source": "environment_override" if "BENCHMARK_CODE_DIRTY" in os.environ else ("git" if dirty is not None else "unavailable"),
             "chunk_count": len(inputs.chunks), "query_count": len(rows),
             "evaluable_query_count": len(eligible), "successful_query_count": sum(r["status"] == "ok" for r in rows),
             "index_latency_seconds": index_latency, "query_latency_seconds": sum(latencies),
@@ -220,6 +252,8 @@ def write_report(result: dict, root: Path = Path("reports")) -> Path:
     for filename, rows, fields in (
         ("summary.csv", [{"metric": k, "value": v} for k, v in result["summary"].items()], ["metric", "value"]),
         ("per_query.csv", result["per_query"], ["query_number", "status", "latency_seconds", "retrieved_chunk_numbers",
+            "candidate_pool_size", "candidate_union_size", "Candidate Recall@10", "Candidate Recall@20",
+            "Candidate Recall@50", "Candidate Recall@pool",
             "Recall@1", "Recall@3", "Recall@5", "Recall@10", "Top-1 accuracy", "MRR", "nDCG", "positive-over-hard-negative"]),
         ("errors.csv", result["errors"], ["query_number", "stage", "code"]),
     ):
@@ -235,7 +269,10 @@ def write_report(result: dict, root: Path = Path("reports")) -> Path:
     lines.extend(["", "MRR and binary nDCG use top_k. Recall is macro-averaged across queries.",
                   "Unresolved-reference queries are excluded; failed retrievals count as zero.",
                   "Positive-over-hard-negative: best positive score strictly exceeds best hard-negative score; ties fail.",
-                  "Latency includes query embedding and full corpus search; percentiles use nearest rank.",
+                  "Candidate Recall is measured before reranking; hybrid pool is the top candidate_k RRF union.",
+                  "Candidate Recall@k is N/A when k exceeds the requested pool and unsearched corpus remains.",
+                  "Dense/BM25 hard-negative diagnostics use full-corpus scores; hybrid uses candidate RRF scores (absent=0).",
+                  "Latency includes candidate retrieval and optional reranking; percentiles use nearest rank.",
                   "Token usage covers indexing and queries. N/A means unavailable, not zero.",
                   "Corpus and gold snapshots are identified by SHA-256 of exact input bytes."])
     (directory / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

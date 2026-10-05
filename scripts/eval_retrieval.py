@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from knowledge_base.embedding_config import provider_from_environment
+from knowledge_base.benchmark_config import BenchmarkConfigurationError, config_from_environment
 from knowledge_base.document_representation import DocumentRepresentationError, validate_document_representation
 from knowledge_base.retrieval_benchmark import load_inputs, run_benchmark, write_report
 
@@ -17,20 +18,19 @@ def main() -> int:
     failed = False
     try:
         inputs = load_inputs(args.corpus, args.gold)
-        top_k = args.top_k if args.top_k is not None else int(os.environ.get("BENCHMARK_TOP_K", "10"))
+        config = config_from_environment(top_k=args.top_k)
         rate = os.environ.get("BENCHMARK_COST_PER_MILLION_TOKENS", "")
         cost = float(rate) if rate else None
-        if top_k < 10:
-            raise ValueError
         representation = validate_document_representation(
             os.environ.get("BENCHMARK_DOCUMENT_REPRESENTATION", "plain")
         )
         # Validate inputs before constructing any API-backed provider.
-        provider = provider_from_environment()
-        result = run_benchmark(provider, inputs, top_k=top_k, cost_per_million_tokens=cost,
-                               document_representation=representation)
+        provider = provider_from_environment() if config.retrieval_mode != "bm25" else None
+        result = run_benchmark(provider, inputs, top_k=config.top_k, cost_per_million_tokens=cost,
+                               document_representation=representation, retrieval_mode=config.retrieval_mode,
+                               candidate_k=config.candidate_k, rrf_k=config.rrf_k)
         directory = write_report(result)
-    except DocumentRepresentationError as error:
+    except (DocumentRepresentationError, BenchmarkConfigurationError) as error:
         print(str(error))
         return 1
     except Exception:

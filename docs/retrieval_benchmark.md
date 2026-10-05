@@ -5,6 +5,11 @@ Generation API и GPT-5.6 Luna не используются. Реальные �
 
 ## Архитектура и совместимость
 
+Общий candidate retrieval benchmark теперь поддерживает dense, BM25 и hybrid RRF.
+Конфигурация, candidate metrics, reranker boundary, Docker metadata overrides и
+автоматическое сравнение описаны в [Candidate retrieval milestone](candidate_retrieval.md).
+Default остаются dense/plain.
+
 `OpenAIEmbeddingProvider` реализует существующий `EmbeddingProvider`: `dimension`,
 `embed_texts`, `embed_query`. `Retriever` и cosine `InMemoryVectorStore` общие для
 всех моделей. `embedding_config.PROVIDER_FACTORIES` — точка регистрации новых

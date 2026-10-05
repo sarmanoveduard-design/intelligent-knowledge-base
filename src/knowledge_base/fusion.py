@@ -1,10 +1,9 @@
 """Объединение результатов поисковых систем по их позициям."""
 
 
-def reciprocal_rank_fusion(rankings, k=60, limit=3):
-    if k <= 0 or limit <= 0:
-        raise ValueError("k и limit должны быть положительными")
-
+def _fusion_scores(rankings, k):
+    if k <= 0:
+        raise ValueError("k должен быть положительным")
     scores = {}
     first_positions = {}
 
@@ -18,6 +17,18 @@ def reciprocal_rank_fusion(rankings, k=60, limit=3):
                 document_id, (search_index, position)
             )
 
+    return scores, first_positions
+
+
+def reciprocal_rank_fusion_scores(rankings, k=60):
+    """Scores from the same algorithm used by reciprocal_rank_fusion."""
+    return _fusion_scores(rankings, k)[0]
+
+
+def reciprocal_rank_fusion(rankings, k=60, limit=3):
+    if limit <= 0:
+        raise ValueError("limit должен быть положительным")
+    scores, first_positions = _fusion_scores(rankings, k)
     return sorted(
         scores,
         key=lambda i: (
