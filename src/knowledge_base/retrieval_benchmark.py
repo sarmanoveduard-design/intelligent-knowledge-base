@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from knowledge_base.chunker import Chunk
 from knowledge_base.benchmark_models import BenchmarkCase
+from knowledge_base.document_representation import document_embedding_text, validate_document_representation
 from knowledge_base.embeddings import EmbeddingProvider, embedding_identity
 from knowledge_base.retriever import Retriever
 from knowledge_base.vector_store import InMemoryVectorStore
@@ -34,6 +35,7 @@ class BenchmarkInputs:
     queries: tuple[GoldQuery, ...]
     corpus_hash: str
     gold_hash: str
+    document_metadata: tuple[dict[str, str], ...] = ()
 
 
 def load_inputs(corpus: Path, gold: Path) -> BenchmarkInputs:
@@ -72,7 +74,8 @@ def load_inputs(corpus: Path, gold: Path) -> BenchmarkInputs:
     if not queries:
         raise ValueError("Gold set requires queries")
     return BenchmarkInputs(ids, chunks, tuple(queries), hashlib.sha256(corpus_bytes).hexdigest(),
-                           hashlib.sha256(gold_bytes).hexdigest())
+                           hashlib.sha256(gold_bytes).hexdigest(),
+                           tuple(dict(row.get("metadata", {})) for row in rows))
 
 
 def ranking_metrics(ranked: list[str], positives: tuple[str, ...]) -> dict:
@@ -103,11 +106,21 @@ def code_revision() -> tuple[str | None, bool | None]:
 
 
 def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k: int = 10,
-                  cost_per_million_tokens: float | None = None) -> dict:
+                  cost_per_million_tokens: float | None = None,
+                  document_representation: str = "plain") -> dict:
+    validate_document_representation(document_representation)
     if type(top_k) is not int or top_k < 10:
         raise ValueError("top_k must be at least 10 for Recall@10")
     if cost_per_million_tokens is not None and (not isfinite(cost_per_million_tokens) or cost_per_million_tokens < 0):
         raise ValueError("Invalid configured token cost")
+    embedding_texts = None
+    if document_representation != "plain":
+        if inputs.document_metadata and len(inputs.document_metadata) != len(inputs.chunks):
+            raise ValueError("Document metadata count does not match corpus chunks")
+        embedding_texts = tuple(document_embedding_text(
+            chunk.text, inputs.document_metadata[i] if inputs.document_metadata else {},
+            mode=document_representation,
+        ) for i, chunk in enumerate(inputs.chunks))
     identity = embedding_identity(provider)
     retriever = Retriever(provider, InMemoryVectorStore(dimension=provider.dimension))
     before = getattr(provider, "telemetry", {})
@@ -115,7 +128,13 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
     started = perf_counter()
     indexed = True
     try:
-        retriever.index_chunks(inputs.chunks)
+        if embedding_texts is None:
+            # Keep the old indexing path byte-for-byte for the default baseline.
+            retriever.index_chunks(inputs.chunks)
+        elif inputs.chunks:
+            # Store original chunks; only the document embedding input is transformed.
+            vectors = provider.embed_texts(embedding_texts)
+            retriever.vector_store.add_many(inputs.chunks, vectors)
     except Exception:
         indexed = False
         errors.append({"query_number": None, "stage": "index", "code": "embedding_index_failed"})
@@ -173,6 +192,7 @@ def run_benchmark(provider: EmbeddingProvider, inputs: BenchmarkInputs, *, top_k
     return {
         "experiment": {
             "schema_version": 1, "provider": identity.provider, "model_name": identity.model_name,
+            "document_representation": document_representation,
             "dimensions": identity.dimensions, "distance_metric": "cosine",
             "normalization": "cosine norm division at search; stored vectors unchanged",
             "corpus_hash": inputs.corpus_hash, "gold_set_hash": inputs.gold_hash,

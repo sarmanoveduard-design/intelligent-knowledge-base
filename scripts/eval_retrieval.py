@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from knowledge_base.embedding_config import provider_from_environment
+from knowledge_base.document_representation import DocumentRepresentationError, validate_document_representation
 from knowledge_base.retrieval_benchmark import load_inputs, run_benchmark, write_report
 
 
@@ -21,10 +22,17 @@ def main() -> int:
         cost = float(rate) if rate else None
         if top_k < 10:
             raise ValueError
+        representation = validate_document_representation(
+            os.environ.get("BENCHMARK_DOCUMENT_REPRESENTATION", "plain")
+        )
         # Validate inputs before constructing any API-backed provider.
         provider = provider_from_environment()
-        result = run_benchmark(provider, inputs, top_k=top_k, cost_per_million_tokens=cost)
+        result = run_benchmark(provider, inputs, top_k=top_k, cost_per_million_tokens=cost,
+                               document_representation=representation)
         directory = write_report(result)
+    except DocumentRepresentationError as error:
+        print(str(error))
+        return 1
     except Exception:
         failed = True
     if failed:

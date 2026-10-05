@@ -116,6 +116,65 @@ estimated_cost отражает переданный тариф, не факти
 
 ## Артефакты и определения
 
+### Document representation
+
+`BENCHMARK_DOCUMENT_REPRESENTATION` задаёт представление документов для embeddings.
+По умолчанию `plain`: embedding input в точности равен `chunk.text`, используется
+прежний путь `Retriever.index_chunks`. Существующие команды без этой переменной
+сохраняют plain baseline. `run_benchmark` также принимает явный keyword-аргумент
+`document_representation="plain"`; environment читается только в CLI.
+
+Режим `structure_aware_v1` использует фиксированные английские labels и порядок:
+
+```text
+Chapter: <chapter>
+Article: <article_title>
+
+<text>
+```
+
+Labels ровно `Chapter: ` и `Article: `, разделитель строк — LF.
+Краевые пробелы chapter/article_title удаляются только при построении representation;
+пустые или whitespace-only заголовки полностью пропускаются вместе с label.
+Если остаётся одна строка metadata, за ней следует одна пустая строка и исходный
+text; если обе пусты/отсутствуют, результат в точности text. Сам text не обрезается,
+не нормализуется и не переформулируется. Другие metadata и answer_hint не используются.
+
+Representation реализован в benchmark layer. Для structure_aware_v1 benchmark
+передаёт сформированные строки существующему EmbeddingProvider и добавляет vectors
+с исходными Chunk в уже созданный Retriever/vector store. Общий Retriever, OpenAI
+и Ollama providers не меняются. Query embedding использует прежний путь без prefix.
+Исходные chunks, document_id, chunk IDs, section_ref, metadata и snapshot-файлы
+сохраняются. Непустой prefix не создаёт новый документ или новый chunk.
+
+В `experiment.json` и `REPORT.md` поле `document_representation` всегда указывает
+`plain` или `structure_aware_v1`. Суффикс `_v1` явно фиксирует версию формата.
+`corpus_hash` и `gold_set_hash` по-прежнему SHA-256 исходных snapshot bytes,
+а не embedding input. Поэтому hashes могут совпадать у двух режимов; при сравнении
+экспериментов проверяйте также document_representation. В отчётах нет source texts,
+структурных заголовков или answer_hint, включая error-отчёты.
+
+Допустимы только эти два режима. Неизвестное значение, включая пустую строку,
+отклоняется понятной безопасной ошибкой до создания API-провайдера в CLI;
+ошибка не выводит значение переменной или source texts.
+
+Для будущего запуска того же benchmark добавьте к существующей команде:
+
+```powershell
+$env:BENCHMARK_DOCUMENT_REPRESENTATION='structure_aware_v1'
+```
+
+Для повторения plain baseline явно установите:
+
+```powershell
+$env:BENCHMARK_DOCUMENT_REPRESENTATION='plain'
+```
+
+Эти команды только меняют конфигурацию. На этапе разработки representation
+реальные BGE/Ollama/OpenAI benchmark-вызовы не выполнялись.
+
+### Experiment output
+
 Каждый реальный запуск создаёт `reports/<UTC timestamp>-<random id>/`:
 `REPORT.md`, `experiment.json`, `summary.csv`, `per_query.csv`, `errors.csv`.
 `reports/` исключён из Git. Отчёты unit-тестов создаются только во временных папках.
