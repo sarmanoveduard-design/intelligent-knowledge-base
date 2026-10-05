@@ -1,0 +1,38 @@
+"""Explicit real-run entry point; importing this module performs no API calls."""
+import argparse
+import os
+from pathlib import Path
+
+from knowledge_base.embedding_config import provider_from_environment
+from knowledge_base.retrieval_benchmark import load_inputs, run_benchmark, write_report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Retrieval benchmark, not LLM generation")
+    parser.add_argument("--corpus", required=True, type=Path)
+    parser.add_argument("--gold", required=True, type=Path)
+    parser.add_argument("--top-k", type=int, default=None)
+    args = parser.parse_args()
+    failed = False
+    try:
+        inputs = load_inputs(args.corpus, args.gold)
+        top_k = args.top_k if args.top_k is not None else int(os.environ.get("BENCHMARK_TOP_K", "10"))
+        rate = os.environ.get("BENCHMARK_COST_PER_MILLION_TOKENS", "")
+        cost = float(rate) if rate else None
+        if top_k < 10:
+            raise ValueError
+        # Validate inputs before constructing any API-backed provider.
+        provider = provider_from_environment()
+        result = run_benchmark(provider, inputs, top_k=top_k, cost_per_million_tokens=cost)
+        directory = write_report(result)
+    except Exception:
+        failed = True
+    if failed:
+        print("Benchmark could not start or write artifacts; check input files, SDK and environment configuration.")
+        return 1
+    print(f"Report: reports/{directory.name}/REPORT.md")
+    return 0 if result["experiment"]["status"] == "complete" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -34,3 +34,9 @@ Thumbs.db
 
 # Внутренняя документация
 docs/private/
+
+# Local benchmark inputs and generated reports
+data/benchmark/
+reports/
+.python-runtime/
+.uv-cache/

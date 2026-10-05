@@ -5,7 +5,7 @@ from math import sqrt
 from typing import Sequence
 
 from knowledge_base.chunker import Chunk
-from knowledge_base.embeddings import Vector
+from knowledge_base.embeddings import EmbeddingIdentity, Vector
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,17 @@ class InMemoryVectorStore:
 
         self._dimension = dimension
         self._items: list[IndexedChunk] = []
+        self._embedding_identity: EmbeddingIdentity | None = None
+
+    def bind_embedding(self, identity: EmbeddingIdentity) -> None:
+        if identity.dimensions != self.dimension:
+            raise ValueError("Embedding dimension does not match vector store")
+        if self._embedding_identity is None:
+            if self.count:
+                raise ValueError("Cannot bind populated store with unknown embedding model")
+            self._embedding_identity = identity
+        elif self._embedding_identity != identity:
+            raise ValueError("Cannot mix embedding providers/models/dimensions in vector store")
 
     @property
     def dimension(self) -> int:
