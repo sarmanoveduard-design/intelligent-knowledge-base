@@ -311,6 +311,23 @@ def _validate_maps(sources: dict[str, bytes], chunks: tuple[CorpusChunk, ...]) -
                 raise TeamDatasetError("invalid_embedding_map_covered_by", row=number)
 
 
+def validate_embedding_maps(sources: dict[str, bytes], chunks: tuple[CorpusChunk, ...]) -> None:
+    """Shared map validation for preparation layers."""
+    _validate_maps(sources, chunks)
+
+
+def benchmark_snapshots(chunks: Iterable[CorpusChunk], cases: Iterable[BenchmarkCase]) -> tuple[bytes, bytes]:
+    """Serialize the existing runner's canonical corpus/gold snapshot schema."""
+    corpus_bytes = canonical_json({"chunks": [
+        {"id": item.chunk_id, "document_id": item.document_id, "section_ref": item.section_ref,
+         "text": item.text, "metadata": item.metadata} for item in chunks]})
+    gold_bytes = canonical_json({"queries": [
+        {"query_id": item.query_id, "text": item.text, "difficulty": item.difficulty,
+         "positive_chunk_ids": item.positives, "hard_negative_chunk_ids": item.hard_negatives,
+         "metadata": item.metadata} for item in cases]})
+    return corpus_bytes, gold_bytes
+
+
 def prepare_team_benchmark(corpus_dir: Path, gold: Path, out: Path) -> dict:
     files = sorted(corpus_dir.glob("*_embeddable.csv"))
     maps = sorted(corpus_dir.glob("*_embedding_map.csv"))
@@ -321,13 +338,7 @@ def prepare_team_benchmark(corpus_dir: Path, gold: Path, out: Path) -> dict:
     chunks = TeamCorpusAdapter().from_sources(corpus_sources)
     _validate_maps(map_sources, chunks)
     cases = TeamGoldAdapter().from_source(gold.suffix.lower(), gold_bytes, chunks)
-    corpus_bytes = canonical_json({"chunks": [
-        {"id": item.chunk_id, "document_id": item.document_id, "section_ref": item.section_ref,
-         "text": item.text, "metadata": item.metadata} for item in chunks]})
-    gold_snapshot = canonical_json({"queries": [
-        {"query_id": item.query_id, "text": item.text, "difficulty": item.difficulty,
-         "positive_chunk_ids": item.positives, "hard_negative_chunk_ids": item.hard_negatives,
-         "metadata": item.metadata} for item in cases]})
+    corpus_bytes, gold_snapshot = benchmark_snapshots(chunks, cases)
     difficulty = Counter(item.difficulty for item in cases)
     sources = ([{"source_file": name, "role": "corpus", "sha256": snapshot_hash(raw)}
                 for name, raw in sorted(corpus_sources.items())]

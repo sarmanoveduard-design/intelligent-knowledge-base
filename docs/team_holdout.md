@@ -85,8 +85,44 @@ pending/согласование/review в статусе, имени файла
 
 Для будущего runner предоставлена функция `select_questions(records, mode)`:
 `approved-only` (default) возвращает approved, `all` возвращает все строки.
-Она не удаляет duplicates. Текущий benchmark runner не изменён: normalized gold
-нужно подключать отдельным adapter с разрешением refs в chunk IDs.
+Она не удаляет duplicates. Подготовка snapshot для существующего runner
+описана ниже; сам runner не изменён.
+
+## Подготовка HOLDOUT для team benchmark
+
+```powershell
+$env:PYTHONPATH = 'src'
+.venv/Scripts/python.exe scripts/prepare_team_holdout_benchmark.py
+.venv/Scripts/python.exe scripts/prepare_team_holdout_benchmark.py --mode all
+```
+
+Первый запуск выбирает только `status=approved` и пишет `corpus.json`, `gold.json`,
+`manifest.json` в `data/team/holdout/benchmark/approved/`. Режим `all` сохраняет
+все вопросы в `data/team/holdout/benchmark/all/`. Аргументы `--corpus-dir`,
+`--gold`, `--out` позволяют задать другие локальные пути. Это только подготовка
+и проверка файлов; retrieval, embeddings, модели, API и Docker не запускаются.
+
+`TeamHoldoutGoldAdapter` проверяет точную normalized schema, типы, provenance
+и оба допустимых статуса **до фильтрации**. В памяти превращает
+`positive_section_refs` в `positive_refs`, а `hard_negatives` в
+`hard_negative_refs`. `TeamGoldAdapter` проверяет все вопросы, включая исключённые
+provisional: IDs, difficulty, несколько positive refs, hard negatives, дубли и
+пересечения refs. Каждый ref должен существовать в загруженном corpus; covered_by
+не используется для неявного перенаправления на другой chunk.
+
+Используются существующие `TeamCorpusAdapter`, map validation, canonical chunk IDs
+и общий serializer benchmark snapshots. Для каждого corpus document обязателен
+ровно один embedding map. Подготовленный gold сохраняет status, source_file и
+source_row в metadata, answer_hint остаётся metadata существующего pipeline.
+Normalized gold и исходные файлы не изменяются. При любой ошибке возвращается
+exit code 1, новые outputs не создаются и существующие outputs не перезаписываются.
+При пустой выборке также возвращается ошибка.
+
+Все три outputs детерминированы; manifest не содержит времени запуска. Он включает
+mode, source/selected question counts, approved/provisional counts исходного набора
+и выбранных вопросов, document IDs/count, chunk count, unresolved_refs_count=0,
+SHA256 snapshot corpus/gold и SHA256 всех прочитанных corpus/map/normalized gold
+sources. Source hashes описывают именно прочитанные и проверенные байты.
 
 ## Дубли и outputs
 
