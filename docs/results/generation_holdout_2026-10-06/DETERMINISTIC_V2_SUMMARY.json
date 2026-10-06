@@ -1,0 +1,35 @@
+{
+  "qwen3:8b": {
+    "queries": 119,
+    "with_citation": 119,
+    "all_sources_valid": 115,
+    "answers_with_invalid_sources": 4,
+    "invalid_source_total": 5,
+    "canonical_bracket_format": 119,
+    "final_source_block": 111,
+    "strict_format_compliant": 111,
+    "internal_terms": 0
+  },
+  "gpt-5.6-luna": {
+    "queries": 119,
+    "with_citation": 119,
+    "all_sources_valid": 119,
+    "answers_with_invalid_sources": 0,
+    "invalid_source_total": 0,
+    "canonical_bracket_format": 115,
+    "final_source_block": 111,
+    "strict_format_compliant": 108,
+    "internal_terms": 0
+  },
+  "gpt-5.6-terra": {
+    "queries": 119,
+    "with_citation": 119,
+    "all_sources_valid": 119,
+    "answers_with_invalid_sources": 0,
+    "invalid_source_total": 0,
+    "canonical_bracket_format": 119,
+    "final_source_block": 119,
+    "strict_format_compliant": 119,
+    "internal_terms": 0
+  }
+}
