@@ -3,7 +3,7 @@ from json import dumps, load
 from typing import Sequence
 from urllib.request import Request, urlopen
 
-from knowledge_base.embeddings import Vector
+from knowledge_base.embeddings import EmbeddingIdentity, Vector
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,10 @@ class OllamaEmbeddingProvider:
     model: str = "bge-m3"
     dimension: int = 1024
     timeout: int = 180
+
+    @property
+    def identity(self) -> EmbeddingIdentity:
+        return EmbeddingIdentity("ollama", self.model, self.dimension)
 
     def embed_texts(
         self,

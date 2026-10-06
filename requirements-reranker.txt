@@ -1,0 +1,4 @@
+# Optional cross-encoder runtime only; never included by requirements.txt.
+torch>=2.6,<3
+transformers>=4.50,<5
+sentencepiece>=0.2,<0.3

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from knowledge_base.chunker import Chunk
-from knowledge_base.embeddings import EmbeddingProvider
+from knowledge_base.embeddings import EmbeddingProvider, embedding_identity
 from knowledge_base.vector_store import (
     InMemoryVectorStore,
     SearchResult,
@@ -17,6 +17,7 @@ class Retriever:
     vector_store: InMemoryVectorStore
 
     def __post_init__(self) -> None:
+        self.vector_store.bind_embedding(embedding_identity(self.embedding_provider))
         if (
             self.embedding_provider.dimension
             != self.vector_store.dimension
@@ -30,6 +31,7 @@ class Retriever:
         self,
         chunks: Sequence[Chunk],
     ) -> None:
+        self.vector_store.bind_embedding(embedding_identity(self.embedding_provider))
         if not chunks:
             return
 
@@ -59,6 +61,7 @@ class Retriever:
         *,
         top_k: int = 5,
     ) -> tuple[SearchResult, ...]:
+        self.vector_store.bind_embedding(embedding_identity(self.embedding_provider))
         clean_query = query.strip()
 
         if not clean_query:

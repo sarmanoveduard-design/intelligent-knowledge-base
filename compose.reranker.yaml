@@ -1,0 +1,36 @@
+# Overlay for compose.yaml + compose.gpu.yaml in the existing project/network.
+services:
+  reranker-benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile.reranker
+    environment:
+      HF_HOME: /cache/huggingface
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+      EMBEDDING_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_EMBEDDING_MODEL: bge-m3
+      OLLAMA_EMBEDDING_DIMENSIONS: "1024"
+      BENCHMARK_RETRIEVAL_MODE: dense
+      BENCHMARK_DOCUMENT_REPRESENTATION: plain
+      BENCHMARK_CANDIDATE_K: "20"
+      BENCHMARK_TOP_K: "10"
+      BENCHMARK_RERANKER: bge-reranker-v2-m3
+      BGE_RERANKER_MODEL: BAAI/bge-reranker-v2-m3
+      BGE_RERANKER_DEVICE: ${BGE_RERANKER_DEVICE:-auto}
+      BGE_RERANKER_BATCH_SIZE: ${BGE_RERANKER_BATCH_SIZE:-4}
+      BGE_RERANKER_MAX_LENGTH: ${BGE_RERANKER_MAX_LENGTH:-512}
+      BGE_RERANKER_REVISION: ${BGE_RERANKER_REVISION:-main}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      BENCHMARK_CODE_COMMIT_SHA: ${BENCHMARK_CODE_COMMIT_SHA:?Set verified host commit SHA}
+      BENCHMARK_CODE_DIRTY: ${BENCHMARK_CODE_DIRTY:?Set verified host dirty flag}
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./data/benchmark:/app/data/benchmark:ro
+      - ./reports:/app/reports
+      - reranker-hf-cache:/cache/huggingface
+    command: ["python", "scripts/eval_retrieval.py", "--corpus", "data/benchmark/corpus.json", "--gold", "data/benchmark/gold.json", "--top-k", "10"]
+volumes:
+  reranker-hf-cache:
