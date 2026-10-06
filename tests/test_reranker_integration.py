@@ -1,5 +1,6 @@
 """Offline preflight and PowerShell orchestration checks. Docker is always fake."""
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -54,13 +55,27 @@ class PreflightTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("powershell"), "PowerShell unavailable")
 class RunnerTests(unittest.TestCase):
-    def run_fake(self, *, running=True, preflight=0, daemon=0, device="auto"):
+    def run_fake(self, *, running=True, preflight=0, daemon=0, device="auto",
+                 corpus_path=None, gold_path=None, missing=()):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "scripts").mkdir()
-            (root / "data/benchmark").mkdir(parents=True)
-            for name in ("corpus", "gold"):
-                (root / f"data/benchmark/{name}.json").write_text("{}")
+            paths = {"corpus": corpus_path or "data/benchmark/corpus.json",
+                     "gold": gold_path or "data/benchmark/gold.json"}
+            inputs = {}
+            for name, path in paths.items():
+                if name in missing:
+                    continue
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                inputs[target] = json.dumps({"synthetic": name}).encode("utf-8")
+                target.write_bytes(inputs[target])
+            parameters = {"Device": device}
+            if corpus_path is not None:
+                parameters["CorpusPath"] = corpus_path
+            if gold_path is not None:
+                parameters["GoldPath"] = gold_path
+            (root / "runner_parameters.json").write_text(json.dumps(parameters), encoding="utf-8")
             shutil.copy(ROOT / "scripts/run_local_reranker_benchmark.ps1", root / "scripts")
             harness = r'''
 $calls = [System.Collections.Generic.List[object]]::new()
@@ -79,10 +94,13 @@ function docker {
     if ($command -match 'eval_retrieval.py') { 'Report: reports/20261005T010101Z-aaaaaaaaaaaa/REPORT.md'; return }
 }
 $outcome = ''
-try { $output = @(& .\scripts\run_local_reranker_benchmark.ps1 -Device 'DEVICE'); $outcome = 'ok' }
+$runnerArguments = @{}
+$parameters = Get-Content -LiteralPath 'runner_parameters.json' -Raw | ConvertFrom-Json
+foreach ($property in $parameters.PSObject.Properties) { $runnerArguments[$property.Name] = $property.Value }
+try { $output = @(& .\scripts\run_local_reranker_benchmark.ps1 @runnerArguments); $outcome = 'ok' }
 catch { $outcome = $_.Exception.Message; $output = @() }
 @{calls=@($calls.ToArray());outcome=$outcome;output=$output;restored=($null -eq $env:BENCHMARK_CODE_COMMIT_SHA)} | ConvertTo-Json -Depth 6 -Compress
-'''.replace("DAEMON", str(daemon)).replace("RUNNING", "$true" if running else "$false").replace("PREFLIGHT", str(preflight)).replace("DEVICE", device)
+'''.replace("DAEMON", str(daemon)).replace("RUNNING", "$true" if running else "$false").replace("PREFLIGHT", str(preflight))
             script = root / "harness.ps1"
             script.write_text(harness, encoding="utf-8")
             environment = {key: value for key, value in os.environ.items() if key not in (
@@ -90,10 +108,49 @@ catch { $outcome = $_.Exception.Message; $output = @() }
             result = subprocess.run([shutil.which("powershell"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                                     cwd=root, env=environment, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(inputs, {path: path.read_bytes() for path in inputs})
             return json.loads(result.stdout)
+
+    def assert_dataset_arguments(self, result, corpus_path, gold_path):
+        self.assertEqual(result["outcome"], "ok")
+        evaluation = next(args for args in result["calls"] if "scripts/eval_retrieval.py" in args)
+        self.assertEqual(evaluation[evaluation.index("--corpus") + 1], corpus_path)
+        self.assertEqual(evaluation[evaluation.index("--gold") + 1], gold_path)
+        comparison = next(args for args in result["calls"] if "scripts/compare_retrieval_reports.py" in args)
+        for name in ("corpus", "gold"):
+            digest = hashlib.sha256(json.dumps({"synthetic": name}).encode("utf-8")).hexdigest()
+            self.assertEqual(comparison[comparison.index(f"--{name}-hash") + 1], digest)
+
+    def test_custom_holdout_paths_used_for_evaluation_hashes_and_validation(self):
+        corpus = "data/team/holdout/benchmark/approved/corpus.json"
+        gold = "data/team/holdout/benchmark/approved/gold.json"
+        # No DEV fixture exists: custom existence validation must succeed independently.
+        result = self.run_fake(corpus_path=corpus, gold_path=gold)
+        self.assert_dataset_arguments(result, corpus, gold)
+        self.assertTrue(result["restored"])
+
+    def test_custom_paths_with_spaces_and_literal_brackets(self):
+        corpus = "data/synthetic holdout [all]/corpus.json"
+        gold = "data/synthetic holdout [all]/gold.json"
+        self.assert_dataset_arguments(self.run_fake(corpus_path=corpus, gold_path=gold), corpus, gold)
+
+    def test_each_custom_parameter_can_be_used_independently(self):
+        corpus = "data/synthetic/custom-corpus.json"
+        gold = "data/synthetic/custom-gold.json"
+        self.assert_dataset_arguments(self.run_fake(corpus_path=corpus), corpus, "data/benchmark/gold.json")
+        self.assert_dataset_arguments(self.run_fake(gold_path=gold), "data/benchmark/corpus.json", gold)
+
+    def test_missing_custom_input_stops_before_docker(self):
+        for name in ("corpus", "gold"):
+            with self.subTest(name=name):
+                result = self.run_fake(corpus_path="data/synthetic/corpus.json",
+                                       gold_path="data/synthetic/gold.json", missing=(name,))
+                self.assertIn("snapshots are required", result["outcome"])
+                self.assertEqual(result["calls"], [])
 
     def test_one_command_running_project_no_restart_and_comparison(self):
         result = self.run_fake()
+        self.assert_dataset_arguments(result, "data/benchmark/corpus.json", "data/benchmark/gold.json")
         self.assertEqual(result["outcome"], "ok")
         commands = [" ".join(args) for args in result["calls"]]
         self.assertFalse(any(" up " in command for command in commands))

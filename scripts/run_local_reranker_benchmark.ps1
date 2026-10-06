@@ -3,7 +3,9 @@ param(
     [ValidateSet('auto', 'cpu', 'cuda')][string]$Device = 'auto',
     [ValidateRange(1, 1024)][int]$BatchSize = 4,
     [ValidateRange(8, 8192)][int]$MaxLength = 512,
-    [string]$Revision = 'main'
+    [string]$Revision = 'main',
+    [ValidateNotNullOrEmpty()][string]$CorpusPath = 'data/benchmark/corpus.json',
+    [ValidateNotNullOrEmpty()][string]$GoldPath = 'data/benchmark/gold.json'
 )
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -31,7 +33,7 @@ try {
     $failureMessage = 'Invalid model revision; use main or a full model commit SHA.'
     if ($Revision -ne 'main' -and $Revision -notmatch '^[0-9a-fA-F]{40}$') { throw $failureMessage }
     $failureMessage = 'Prepared corpus.json and gold.json snapshots are required.'
-    if (-not (Test-Path -LiteralPath 'data/benchmark/corpus.json') -or -not (Test-Path -LiteralPath 'data/benchmark/gold.json')) {
+    if (-not (Test-Path -LiteralPath $CorpusPath -PathType Leaf) -or -not (Test-Path -LiteralPath $GoldPath -PathType Leaf)) {
         throw $failureMessage
     }
     $failureMessage = 'Git SHA/dirty metadata could not be determined.'
@@ -90,11 +92,11 @@ try {
     $result = Invoke-DockerQuiet -Arguments ($runArguments + @('python', 'scripts/check_reranker_ollama.py'))
     if ($result.ExitCode -eq 2) { $failureMessage = 'BGE-M3 missing in project Ollama; no model was downloaded.' }
     if ($result.ExitCode -ne 0) { throw $failureMessage }
-    $corpusHash = (Get-FileHash data/benchmark/corpus.json -Algorithm SHA256).Hash.ToLowerInvariant()
-    $goldHash = (Get-FileHash data/benchmark/gold.json -Algorithm SHA256).Hash.ToLowerInvariant()
+    $corpusHash = (Get-FileHash -LiteralPath $CorpusPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $goldHash = (Get-FileHash -LiteralPath $GoldPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $failureMessage = 'Benchmark did not create a report; check model cache, revision and device.'
     $result = Invoke-DockerQuiet -Arguments ($runArguments + @('python', 'scripts/eval_retrieval.py',
-        '--corpus', 'data/benchmark/corpus.json', '--gold', 'data/benchmark/gold.json', '--top-k', '10'))
+        '--corpus', $CorpusPath, '--gold', $GoldPath, '--top-k', '10'))
     $benchmarkExit = $result.ExitCode
     $reportLine = $result.Output | Where-Object { $_ -match '^Report: reports/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}/REPORT\.md$' } | Select-Object -Last 1
     if (-not $reportLine) { throw $failureMessage }

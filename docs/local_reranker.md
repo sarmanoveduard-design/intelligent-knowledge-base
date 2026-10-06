@@ -63,6 +63,19 @@ Default `none` не импортирует torch/transformers и сохраня�
 
 Требуются подготовленные `data/benchmark/corpus.json` и `gold.json`, Docker Desktop
 с Compose и существующая BGE-M3 в project volume `ollama-models`.
+Это default DEV inputs. Для TEAM HOLDOUT задайте пути к подготовленным snapshots
+относительно корня репозитория (пути с пробелами заключайте в кавычки):
+
+```powershell
+& .\scripts\run_local_reranker_benchmark.ps1 `
+    -CorpusPath 'data/team/holdout/benchmark/approved/corpus.json' `
+    -GoldPath 'data/team/holdout/benchmark/approved/gold.json'
+```
+
+Для всех HOLDOUT вопросов используйте каталог `benchmark/all/`. Runner проверяет
+и хеширует выбранные файлы, передаёт их в evaluation и использует их SHA256
+для сравнения отчётов; копирование или перезапись datasets не требуется.
+
 Runner использует `compose.yaml` + `compose.gpu.yaml` + `compose.reranker.yaml`;
 для auto/cuda добавляется `compose.reranker.gpu.yaml`. Optional зависимости
 устанавливаются только в `Dockerfile.reranker`, основной образ не меняется.
