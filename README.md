@@ -239,4 +239,3 @@ docker compose run --rm app python -m knowledge_base.cli scan
 
 ---
 
-Вопросы, замечания и предложения по интеграции можно оформлять через GitHub Issues и Pull Requests. Перед публикацией результатов убедитесь, что в них нет закрытых материалов заказчика.
