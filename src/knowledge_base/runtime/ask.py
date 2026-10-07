@@ -7,7 +7,8 @@ from typing import Protocol
 from uuid import uuid4
 
 from .config import RuntimeConfig
-from .generation import GenerationOutputError, GenerationRequestBuilder, validate_generation_draft
+from .generation import (GenerationOutputError, GenerationRequestBuilder,
+                         is_limitation_only_draft, validate_generation_draft)
 from .models import (
     AccessContext, AnswerState, AskRequest, AskResult, ContextManifest, ExpertEscalation,
     StructuralValidity,
@@ -103,6 +104,10 @@ class AskService:
             diagnostics['generation']['status'] = 'invalid_output'
             return self._finish(request, decision, context, None, None, diagnostics, str(error))
         diagnostics['generation']['status'] = 'completed'
+        if is_limitation_only_draft(draft):
+            diagnostics['citation'] = {'status': 'not_applicable', 'reason_code': 'NO_FACTUAL_ANSWER',
+                                       'semantic_support': 'not_checked'}
+            return self._finish(request, decision, context, draft, None, diagnostics)
         try:
             validation = self.citation_validator.validate(draft, context)
             replace(validation)

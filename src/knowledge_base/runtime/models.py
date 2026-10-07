@@ -480,9 +480,15 @@ class GenerationDraft:
     provider_metadata: Metadata = field(default_factory=dict)
 
     def __post_init__(self):
-        _nonempty(self.answer, "answer")
+        if not isinstance(self.answer, str):
+            raise ValueError("answer must be a string")
         object.__setattr__(self, "citations", tuple(self.citations))
         object.__setattr__(self, "declared_limitations", _strings(self.declared_limitations, "declared_limitations"))
+        if self.answer == "":
+            if self.citations or not self.declared_limitations:
+                raise ValueError("empty answer requires limitations and no citations")
+        else:
+            _nonempty(self.answer, "answer")
         object.__setattr__(self, "provider_metadata", _metadata(self.provider_metadata))
 
 

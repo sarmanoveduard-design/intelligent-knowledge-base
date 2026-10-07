@@ -87,6 +87,90 @@ class RuntimeAnsweringTests(unittest.TestCase):
         return GenerationDraft('A deterministic draft.',
             (CitationReference(handle or entry.source_handle, identity or entry.evidence.chunk.identity),), limitations)
 
+
+    def test_limitation_only_draft_is_late_refusal_with_stable_reason(self):
+        self.provider.outcome = lambda request: GenerationDraft('', (), ('Requested fact absent.',))
+        result = self.ask()
+        self.assertEqual(result.state, AnswerState.REFUSE_INSUFFICIENT_CONTEXT)
+        self.assertEqual(result.reason_code, 'GENERATION_REPORTED_INSUFFICIENT_CONTEXT')
+        self.assertIsNone(result.answer)
+        self.assertEqual(result.declared_limitations, ('Requested fact absent.',))
+        self.assertTrue(result.diagnostics['generation']['called'])
+
+    def test_late_refusal_never_runs_citation_or_semantic_validation(self):
+        self.provider.outcome = lambda request: GenerationDraft('', (), ('Requested fact absent.',))
+        with patch.object(StructuralCitationValidator, 'validate',
+                          side_effect=AssertionError('No factual answer to validate')) as validation:
+            result = self.ask()
+        validation.assert_not_called()
+        self.assertEqual(result.state, AnswerState.REFUSE_INSUFFICIENT_CONTEXT)
+        self.assertIsNone(result.citation_validation)
+        self.assertEqual(result.diagnostics['citation']['status'], 'not_applicable')
+        self.assertEqual(result.diagnostics['citation']['semantic_support'], 'not_checked')
+        self.assertNotEqual(result.reason_code, 'INVALID_CITATIONS')
+
+    def test_nonempty_answer_without_citations_cannot_be_late_refusal(self):
+        self.provider.outcome = lambda request: GenerationDraft('Unsupported factual claim.', (),
+                                                               ('Requested detail absent.',))
+        for enabled in (False, True):
+            with self.subTest(partial_answers_enabled=enabled):
+                result = replace(self.service, config=replace(self.service.config,
+                    partial_answers_enabled=enabled)).ask(self.request)
+                self.assertEqual(result.state, AnswerState.ERROR)
+                self.assertEqual(result.reason_code, 'INVALID_CITATIONS')
+                self.assertEqual(result.citation_validation.errors, ('NO_CITATIONS',))
+
+    def test_empty_answer_without_limitations_is_error(self):
+        def empty(request):
+            draft = GenerationDraft('Temporary nonempty answer.')
+            object.__setattr__(draft, 'answer', '')
+            return draft
+        self.provider.outcome = empty
+        result = self.ask()
+        self.assertEqual(result.state, AnswerState.ERROR)
+        self.assertEqual(result.reason_code, 'EMPTY_GENERATION_OUTPUT')
+        with self.assertRaises(ValueError): GenerationDraft('', (), ())
+
+    def test_empty_answer_cannot_carry_outside_citation(self):
+        def forged(request):
+            draft = self.draft(request, handle='outside-context', limitations=('Absent detail.',))
+            object.__setattr__(draft, 'answer', '')
+            return draft
+        self.provider.outcome = forged
+        result = self.ask()
+        self.assertEqual(result.state, AnswerState.ERROR)
+        self.assertNotEqual(result.reason_code, 'GENERATION_REPORTED_INSUFFICIENT_CONTEXT')
+
+    def test_nonempty_limited_answer_still_rejects_outside_source(self):
+        self.provider.outcome = lambda request: self.draft(request, handle='outside-context',
+                                                           limitations=('Absent detail.',))
+        result = self.ask()
+        self.assertEqual(result.state, AnswerState.ERROR)
+        self.assertEqual(result.reason_code, 'INVALID_CITATIONS')
+        self.assertIn('UNKNOWN_SOURCE_HANDLE', result.citation_validation.errors)
+
+    def test_late_refusal_is_independent_of_partial_answer_setting(self):
+        self.provider.outcome = lambda request: GenerationDraft('', (), ('Requested fact absent.',))
+        for enabled in (False, True):
+            with self.subTest(partial_answers_enabled=enabled):
+                result = replace(self.service, config=replace(self.service.config,
+                    partial_answers_enabled=enabled)).ask(self.request)
+                self.assertEqual(result.state, AnswerState.REFUSE_INSUFFICIENT_CONTEXT)
+                self.assertEqual(result.reason_code, 'GENERATION_REPORTED_INSUFFICIENT_CONTEXT')
+
+    def test_policy_accepts_only_validated_limitation_only_fields(self):
+        result = self.ask()
+        decision = self.service.sufficiency.evaluate(self.request.question, result.context_manifest,
+                                                    config=self.service.config)
+        refusal = self.service.final_policy.decide(self.request, decision, context=result.context_manifest,
+            draft=GenerationDraft('', (), ('Requested fact absent.',)), citation_validation=None,
+            escalation_id=None, config=self.service.config)
+        self.assertEqual(refusal.reason_code, 'GENERATION_REPORTED_INSUFFICIENT_CONTEXT')
+        for answer, citations, limitations in (('', (), ()), (' ', (), ('Absent.',)),
+                                                ('', result.citation_validation.resolved_citations, ('Absent.',))):
+            with self.subTest(answer=answer, citations=citations, limitations=limitations):
+                with self.assertRaises(ValueError): GenerationDraft(answer, citations, limitations)
+
     def invalid_provider(self):
         return FakeProviderA(lambda request: self.draft(request, handle='invented/source'))
 
@@ -334,7 +418,9 @@ class RuntimeAnsweringTests(unittest.TestCase):
         self.assertEqual(request.output_schema_version, OUTPUT_SCHEMA_VERSION)
         self.assertIn('only from the supplied context', request.instructions)
         self.assertIn('never invent handles', request.instructions)
-        self.assertIn('declare that limitation', request.instructions)
+        self.assertIn('answer = ""', request.instructions)
+        self.assertIn('citations = []', request.instructions)
+        self.assertIn('declared_limitations', request.instructions)
         self.assertIn('Do not conceal conflicts', request.instructions)
 
     def test_request_builder_requires_sufficient_decision(self):

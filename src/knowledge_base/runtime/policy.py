@@ -3,7 +3,7 @@ from dataclasses import replace
 from threading import RLock
 
 from .config import RuntimeConfig
-from .generation import GenerationOutputError, validate_generation_draft
+from .generation import GenerationOutputError, is_limitation_only_draft, validate_generation_draft
 from .models import (
     AnswerState, AskRequest, AskResult, CitationValidationResult, ContextManifest,
     ExpertEscalation, GenerationDraft, StructuralValidity, SufficiencyDecision, SufficiencyStatus,
@@ -13,7 +13,8 @@ from .models import (
 class RuntimeFinalAnswerPolicy:
     """Structural PASS allows a technical answer attempt, not a factual guarantee.
 
-    A draft declaring limitations is a partial answer: disabled by default.
+    A limitation-only draft is a late refusal, without any factual answer.
+    A nonempty draft declaring limitations is a partial answer: disabled by default.
     Citation failures become ERROR by default or an explicit configured escalation.
     This policy makes no provider calls and sends no external notifications.
     """
@@ -44,6 +45,10 @@ class RuntimeFinalAnswerPolicy:
             validate_generation_draft(draft)
         except GenerationOutputError as error:
             return result(AnswerState.ERROR, str(error))
+        if is_limitation_only_draft(draft):
+            return result(AnswerState.REFUSE_INSUFFICIENT_CONTEXT,
+                          'GENERATION_REPORTED_INSUFFICIENT_CONTEXT',
+                          declared_limitations=draft.declared_limitations)
         if citation_validation is None:
             return result(AnswerState.ERROR, 'CITATION_VALIDATION_MISSING')
         try:
