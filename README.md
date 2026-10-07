@@ -1,59 +1,77 @@
 # Интеллектуальная база знаний
 
-**Статус:** исследовательский прототип RAG-ядра: подготовка документов, embeddings, retrieval, reranking и воспроизводимые benchmark-эксперименты. Retrieval holdout и generation benchmark для основного набора из 119 approved-вопросов уже проведены. Это не готовый production RAG-ассистент и не медицинская информационная система.
+**Статус:** универсальное RAG-ядро с рабочим local production runtime v1 и отдельным воспроизводимым benchmark-контуром. Уже собран путь `DOCX/PDF → ingestion → SQLite → chunks → embeddings → vector retrieval → reranking → context assembly → sufficiency gate → локальная LLM → citation validation → answer/refusal`. Retrieval holdout и generation benchmark для основного набора из 119 approved-вопросов проведены отдельно. Это ещё не готовый промышленный сервис и не медицинская информационная система.
 
-Проект универсальный: он не привязан к одному заказчику или предметной области. В рамках стажировки УКЗ-15 «Эксперт МОСТ» его можно использовать как отдельный стенд для экспериментов группы RAG.
+Проект универсальный: он не привязан к одному заказчику, фиксированному набору документов или предметной области. Runtime-код не зависит от MAIN119, TEAM HOLDOUT, benchmark query IDs или заранее размеченных expected answers. В рамках стажировки УКЗ-15 «Эксперт МОСТ» проект можно использовать как отдельный стенд для экспериментов группы RAG и как основу для дальнейшего production-контура.
 
 В публичном репозитории находятся код, синтетические примеры, намеренно опубликованный frozen generation benchmark для MAIN119 и выбранные итоговые отчёты. Исходные приватные документы, полный внутренний corpus заказчика, секреты и иные закрытые материалы публиковать нельзя.
 
 ## Что уже работает
 
-- Регистрация документов, SHA-256, выявление точных дубликатов и базовое версионирование (draft / active / superseded / archived).
+- Регистрация документов, SHA-256, выявление точных дубликатов и версионирование `draft / active / superseded / archived`.
+- Постоянное SQLite-хранилище logical documents, document versions, processing snapshots, chunks, processing state и metadata.
+- Безопасная подготовка новой версии: старая ACTIVE остаётся рабочей до успешной подготовки и явной активации новой версии.
 - Извлечение и нормализация текста DOCX, в том числе текста гиперссылок, и PDF с текстовым слоем.
 - Универсальные SourceBlock и Chunk с привязкой к документу, версии и доступным позициям в источнике (страница PDF / абзац DOCX).
-- Интерфейс EmbeddingProvider, тестовое хранилище векторов в памяти и Retriever для поиска подходящих фрагментов.
-- Локальная мультиязычная embedding-модель BGE-M3 через Ollama: на входе текст, на выходе вектор из 1024 чисел.
-- OpenAI embedding provider для `text-embedding-3-small` и `text-embedding-3-large` с настраиваемой размерностью.
-- Экспериментальные BM25 и RRF для сравнительных retrieval-экспериментов.
-- Локальный reranking через `BAAI/bge-reranker-v2-m3`: BGE-M3 dense → Top-20 candidates → reranker → Top-10.
+- Stable runtime identities для document/version/snapshot/chunk: локальный `chunk_index` не используется как глобальный ключ.
+- Интерфейс `EmbeddingProvider`, локальная мультиязычная embedding-модель BGE-M3 через Ollama и OpenAI embedding provider для `text-embedding-3-small` / `text-embedding-3-large`.
+- Production-compatible `VectorIndex` boundary и in-memory adapter с idempotent upsert, filtering, readiness и rebuild после перезапуска из сохранённых chunks.
+- Runtime retrieval с фильтрацией **до** candidate Top-K: учитываются organization, scopes, lifecycle и processing state. В поиск попадают только разрешённые `ACTIVE + INDEXED` версии.
+- Локальный reranking через `BAAI/bge-reranker-v2-m3`; retrieval score и reranker score хранятся отдельно вместе с типом/identity scorer-а.
+- `ContextAssembler`: формирует точный manifest только из тех chunks, которые реально будут переданы модели; сохраняет source handles `S1`, `S2`, … и provenance.
+- `SufficiencyPolicy`: прозрачные технические gates для `SUFFICIENT / INSUFFICIENT / CLARIFICATION_REQUIRED / CONFLICT / ERROR`; thresholds конфигурируемые и не объявляются calibrated confidence.
+- `GenerationProvider` boundary и локальный Ollama adapter для `qwen3:8b` со structured JSON output, `think=false` и настраиваемыми runtime limits.
+- Runtime citation validation по exact source handle и полной ChunkIdentity. Citation к source outside ContextManifest отклоняется.
+- Final answer policy: при недостатке evidence модель не запускается; limitation-only structured draft может завершиться безопасным `REFUSE_INSUFFICIENT_CONTEXT`; factual answer без валидной citation не выдаётся как `ANSWER`.
+- In-memory expert escalation record как boundary для будущих Telegram/email/CRM интеграций.
+- Первый реальный local end-to-end smoke на синтетическом DOCX успешно пройден: подтверждённый вопрос → `ANSWER` с citation, отсутствующий факт → controlled refusal, отсутствие scope → отказ до generation.
 - Воспроизводимый retrieval benchmark с Recall@k, Top-1 accuracy, MRR, nDCG, hard-negative diagnostics, latency, token usage, cost estimate и SHA-256 snapshots входных corpus/gold.
 - Импорт и строгая валидация TEAM HOLDOUT, включая проверку ссылок на chunks, hard negatives, статусов approved/provisional и provenance.
 - Independent TEAM HOLDOUT: 9 документов, 1655 chunks, 149 вопросов всего, основной approved-only subset — 119 вопросов.
 - Frozen generation benchmark MAIN119: один и тот же Top-10 контекст и один prompt для Qwen3:8B, GPT-5.6 Luna и GPT-5.6 Terra.
 - Детерминированная проверка source validity и citation-format для всех 119 ответов каждой модели.
 - Дополнительная blind-проверка готовых ответов моделью GPT-5.6 Sol в роли LLM-judge: 119 сравнений, ответы A/B/C обезличены и переставляются между вопросами.
+- Отдельная data-independent negative/refusal benchmark infrastructure с synthetic DEV cases и deterministic evaluator; MAIN119 при этом остаётся frozen baseline.
 - Colab notebook для generation benchmark.
-- На текущей ветке полный Docker unit/integration suite: **283 теста, 8 skipped**.
-
-Полностью автоматизированный production-путь «новый файл → обновление индекса → retrieval → проверяемый LLM-ответ → безопасный отказ/эскалация эксперту» ещё не собран. Retrieval и generation сейчас проверяются как отдельные воспроизводимые экспериментальные этапы.
+- На текущей ветке полный unit suite: **608 тестов**.
 
 ## Что пока не реализовано
 
 - Извлечение таблиц DOCX и OCR для сканированных PDF.
-- Постоянная production-векторная БД.
-- Интеграция экспериментальных BM25/RRF и benchmark-reranker в основной production Retriever.
-- Серверная фильтрация поиска по утверждённым версиям, организациям и правам доступа.
-- Production-генерация ответа с обязательной проверкой цитат, отказом при недостатке источников и очередью эксперта.
-- Отдельный negative/refusal benchmark: основной MAIN119 содержит answerable-вопросы и не измеряет корректность отказа при недостатке данных.
+- Постоянная production-векторная БД: текущий runtime использует memory index; после restart нужен explicit rebuild из SQLite chunks.
+- Масштабируемый vector backend (например pgvector/Qdrant) и нагрузочная проверка больших corpus.
+- Полноценная внешняя authentication/authorization integration. Runtime уже применяет organization/scopes filters, но источник доверенной identity пока остаётся обязанностью composition/application layer.
+- Semantic entailment для citations: структурно валидная ссылка ещё не доказывает, что источник действительно поддерживает конкретное утверждение. В v1 semantic support = `NOT_CHECKED`.
+- Calibrated sufficiency thresholds для production domain: текущие gates прозрачны и конфигурируемы, но высокий retrieval/reranker score не считается доказательством semantic answerability.
+- Persistent очередь эксперта и внешние интеграции; текущий escalation repository находится в памяти.
+- Production HTTP API / UI и полноценный CLI для `ingest → index → ask`. Существующий CLI `scan` остаётся отдельным способом регистрации файлов.
+- Полный model-input token budget: context assembler v1 использует character budget для chunks; prompt/formatting overhead учитывается как известное ограничение.
+- Реальный frozen negative/refusal holdout. Текущий `negative_refusal_v1` — DEV/evaluation infrastructure, а не финальная независимая оценка качества моделей.
 - EXTENDED-набор из всех 149 вопросов ещё не зафиксирован как отдельный generation snapshot: 30 provisional-вопросов требуют отдельного диагностического режима.
 
-**Важно:** наличие статусов в реестре документов ещё не означает, что поиск автоматически исключает черновики. Пока не реализован соответствующий production-фильтр, нельзя использовать прототип для ответов по реальным нормативным материалам без дополнительной проверки.
+**Важно:** production runtime v1 уже фильтрует lifecycle/access и умеет безопасно отказываться, но это не отменяет предметную валидацию. Структурно корректная citation и высокий retrieval score не гарантируют factual correctness или полноту ответа.
 
 ## Структура
 
 | Путь | Назначение |
 | --- | --- |
-| `src/knowledge_base/` | Регистрация, разбор документов, chunks, embeddings, retrieval и benchmark-логика |
+| `src/knowledge_base/` | Регистрация, разбор документов, embeddings, retrieval и benchmark-логика |
+| `src/knowledge_base/runtime/` | Production runtime contracts и pipeline: storage, ingestion, indexing, retrieval, context, sufficiency, generation, citations, policy, composition |
+| `src/knowledge_base/runtime/storage.py` | SQLite document/version/chunk repository |
+| `src/knowledge_base/runtime/vector_index.py` | In-memory runtime VectorIndex adapter |
+| `src/knowledge_base/runtime/ollama.py` | Local Ollama generation provider и model preflight |
 | `src/knowledge_base/ollama_embeddings.py` | Адаптер к Ollama API для BGE-M3 |
 | `src/knowledge_base/openai_embeddings.py` | OpenAI embeddings adapter |
 | `src/knowledge_base/bge_reranker.py` | Адаптер локального `bge-reranker-v2-m3` |
 | `src/knowledge_base/fusion.py` | RRF: объединение ранжированных результатов |
 | `src/knowledge_base/team_holdout_benchmark.py` | Подготовка и валидация TEAM HOLDOUT |
+| `scripts/smoke_runtime_local.py` | Local end-to-end synthetic runtime smoke через BGE-M3 + reranker + Qwen3:8B |
 | `scripts/eval_retrieval.py` | Универсальный retrieval benchmark runner |
 | `scripts/compare_retrieval_reports.py` | Offline-сравнение совместимых retrieval reports |
 | `scripts/run_local_reranker_benchmark.ps1` | One-command запуск локального BGE-M3 + reranker benchmark |
 | `scripts/prepare_team_holdout_benchmark.py` | Подготовка frozen corpus/gold snapshots для TEAM HOLDOUT |
 | `benchmarks/generation/main_119/` | Публичный frozen input MAIN119 и generation prompt |
+| `benchmarks/generation/negative_refusal_v1/` | Data-independent negative/refusal DEV benchmark infrastructure |
 | `notebooks/generation_benchmark_colab.ipynb` | Colab notebook для generation benchmark |
 | `docs/retrieval_benchmark.md` | Методика retrieval benchmark |
 | `docs/local_reranker.md` | Локальный reranker и воспроизводимый запуск |
@@ -83,7 +101,25 @@ docker compose build app
 docker compose run --rm app python -m unittest discover -s tests -v
 ~~~
 
-На текущей ветке полный suite: **283 теста, 8 skipped**. Для основной offline-проверки не требуются OpenAI API, BGE-M3, reranker model или GPU; runtime/integration checks, которым нужен внешний model runtime, могут быть пропущены.
+На текущей ветке полный unit suite: **608 тестов**. Основная часть runtime tests работает offline с fake providers/transports и не требует OpenAI API или живых моделей.
+
+## Local production runtime smoke
+
+`runtime`-слой проверен реальным локальным end-to-end smoke на синтетическом DOCX. Для этого используются уже установленные локальные модели:
+
+- embeddings: `bge-m3:latest` через Ollama;
+- reranker: cached `BAAI/bge-reranker-v2-m3`;
+- generation: `qwen3:8b` через Ollama, `think=false`.
+
+Smoke проверяет три принципиально разных пути:
+
+1. подтверждённый факт → `ANSWER` + source handle `S1` + structural citation `PASS`;
+2. отсутствующий в context факт → structured limitation-only draft → `REFUSE_INSUFFICIENT_CONTEXT` без выдуманного значения;
+3. отсутствие разрешённого scope → `NO_EVIDENCE`, generation не запускается.
+
+Скрипт: [`scripts/smoke_runtime_local.py`](scripts/smoke_runtime_local.py).
+
+Это **технический smoke, а не benchmark качества модели**. Semantic support citations остаётся `NOT_CHECKED`, а длительность cold-load локальных моделей зависит от оборудования и памяти GPU/CPU.
 
 ## Эксперимент с BGE-M3: вариант A — без NVIDIA (CPU)
 
@@ -284,20 +320,21 @@ Colab notebook: [`notebooks/generation_benchmark_colab.ipynb`](notebooks/generat
 docker compose run --rm app python -m knowledge_base.cli scan
 ~~~
 
-Этот шаг регистрирует документы; он **не запускает автоматически** embeddings или RAG-ответы.
+Этот шаг регистрирует документы; он **не запускает автоматически** embeddings или RAG-ответы. Production runtime v1 пока собирается через Python composition layer; отдельный user-facing CLI/API для `ingest → index → ask` ещё не добавлен.
 
 Не загружайте в репозиторий документы заказчика, медицинские данные, ключи или иные закрытые материалы. `data/incoming/`, `data/processed/`, `data/team/`, `.env`, `reports/` и `docs/private/` исключены через `.gitignore`; перед каждым коммитом дополнительно проверяйте `git status` и `git diff --cached`.
 
 ## Следующие задачи
 
 1. Не тюнинговать retrieval или generation под MAIN119 и не считать повторные прогоны на том же наборе новой независимой проверкой.
-2. Разобрать retrieval/context coverage для вопросов 57 и 116 и проверить улучшения уже на новом контрольном наборе.
-3. Подготовить отдельный negative/refusal benchmark для проверки корректного отказа при недостатке источников.
-4. Подготовить EXTENDED149 как отдельный диагностический generation-набор после проверки 30 provisional-вопросов.
-5. Перенести пригодные generation/evaluation-компоненты из экспериментального контура в стабильный project tooling и затем собрать production-путь с проверяемыми цитатами и эскалацией эксперту.
-6. Продолжить production-задачи: persistent vector DB, source/version/access filters и безопасное обновление базы знаний.
+2. Подготовить отдельный **frozen negative/refusal holdout** на новых данных; DEV infrastructure уже существует и не должна превращаться в holdout задним числом.
+3. Подключить persistent production vector backend через существующий `VectorIndex` contract, сохранив текущую orchestration без переписывания.
+4. Добавить production HTTP API/CLI и доверенный authentication/authorization source поверх уже существующих organization/scope filters.
+5. Сделать persistent escalation repository и внешние интеграции для передачи нерешённых случаев эксперту.
+6. Улучшить model-input budget (token-aware) и отдельно исследовать semantic support citations, не смешивая это со структурной проверкой source handles.
+7. Подготовить EXTENDED149 как отдельный диагностический generation-набор после проверки 30 provisional-вопросов.
+8. Проверять дальнейшие улучшения на новых независимых corpus/holdout, а не донастраивать систему на уже просмотренный MAIN119.
 
-Никакие компоненты медицинского исполнения не входят в этот поисковый прототип.
+Никакие компоненты медицинского исполнения не входят в этот RAG runtime.
 
 ---
-
