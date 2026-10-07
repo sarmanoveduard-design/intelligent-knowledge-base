@@ -11,7 +11,7 @@ class ScoreThreshold:
     """An explicit cutoff in a named scorer space, not a probability.
 
     scorer_identity is an opaque configured provider/model/revision identifier.
-    The future policy must match both identity and type before using the cutoff.
+    The policy matches both identity and type before using the cutoff.
     """
     value: float
     score_type: str
@@ -25,10 +25,12 @@ class ScoreThreshold:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    """No unset threshold implies permission to generate.
+    """Explicit technical gates, with no calibrated defaults or semantic proof.
 
-    None means unconfigured; a future policy must handle that explicitly.
-    This class validates consistency and never decides evidence sufficiency.
+    unconfigured_threshold_policy='skip' allows other gates to decide while
+    reporting unset score gates. 'require' requires both score thresholds.
+    Configured thresholds apply to every selected context entry, not just the
+    highest score. This configuration never launches generation.
     Request filters may narrow access, but requests cannot override this policy.
     """
     candidate_top_k: int = 20
@@ -38,8 +40,11 @@ class RuntimeConfig:
     minimum_evidence_count: int = 1
     dense_threshold: ScoreThreshold | None = None
     reranker_threshold: ScoreThreshold | None = None
+    unconfigured_threshold_policy: str = "skip"
 
     def __post_init__(self):
+        if self.unconfigured_threshold_policy not in ("skip", "require"):
+            raise ValueError("unconfigured_threshold_policy must be skip or require")
         for name in ("candidate_top_k", "final_top_k", "context_max_chars", "minimum_evidence_count"):
             _positive_int(getattr(self, name), name)
         if self.candidate_top_k < self.final_top_k:

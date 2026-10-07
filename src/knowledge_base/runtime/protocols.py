@@ -10,7 +10,8 @@ from typing import Protocol, Sequence, runtime_checkable
 from .config import RuntimeConfig
 from .models import (
     AccessContext, AskRequest, AskResult, CitationValidationResult,
-    ChunkIdentity, ContextManifest, DocumentIdentity, DocumentVersionIdentity, EvidenceChunk,
+    ChunkIdentity, ClarificationAssessment, ConflictAssessment, ContextManifest,
+    DocumentIdentity, DocumentVersionIdentity, EvidenceChunk,
     ExpertEscalation, GenerationDraft, GenerationRequest, IndexIdentity,
     IndexedEvidence, IndexManifest, ProcessingSnapshotIdentity,
     RetrievalFilters, RuntimeDocument, RuntimeDocumentVersion, RuntimeEvidence,
@@ -162,6 +163,20 @@ class ContextAssembler(Protocol):
         self, candidates: tuple[RuntimeEvidence, ...], *, max_chars: int,
     ) -> ContextManifest:
         """Return only ordered evidence actually passed to generation."""
+        ...
+
+
+@runtime_checkable
+class ConflictDetector(Protocol):
+    def detect(self, question: str, context: ContextManifest) -> ConflictAssessment:
+        """Report an explicit conflict/clear/unknown assessment; no execution required."""
+        ...
+
+
+@runtime_checkable
+class ClarificationPolicy(Protocol):
+    def assess(self, question: str, context: ContextManifest) -> ClarificationAssessment:
+        """Report concrete missing parameter names, without guessing in orchestration."""
         ...
 
 

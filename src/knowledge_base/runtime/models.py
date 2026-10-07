@@ -103,6 +103,12 @@ class SufficiencyStatus(str, Enum):
     ERROR = "error"
 
 
+class ConflictStatus(str, Enum):
+    UNKNOWN = "unknown"
+    CLEAR = "clear"
+    CONFLICT = "conflict"
+
+
 class StructuralValidity(str, Enum):
     PASS = "pass"
     FAIL = "fail"
@@ -362,6 +368,7 @@ class ContextManifest:
     excerpts must preserve their source identity and corresponding coordinates.
     """
     entries: tuple[ContextEntry, ...] = ()
+    diagnostics: Metadata = field(default_factory=dict)
 
     def __post_init__(self):
         entries = tuple(self.entries)
@@ -371,10 +378,35 @@ class ContextManifest:
         if len(set(handles)) != len(handles) or len(set(chunk_ids)) != len(chunk_ids):
             raise ValueError("context source handles and chunk IDs must be unique")
         object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "diagnostics", _metadata(self.diagnostics))
 
     @property
     def chunk_ids(self) -> tuple[str, ...]:
         return tuple(entry.evidence.chunk.identity.chunk_id for entry in self.entries)
+
+
+@dataclass(frozen=True)
+class ConflictAssessment:
+    """An explicit hook assertion; UNKNOWN makes no semantic claim."""
+    status: ConflictStatus = ConflictStatus.UNKNOWN
+
+    def __post_init__(self):
+        _enum(self.status, ConflictStatus)
+
+
+@dataclass(frozen=True)
+class ClarificationAssessment:
+    """Missing parameter names supplied by a trusted hook, never guessed here.
+
+    Hooks should return parameter names only, without secrets or input values.
+    """
+    missing_parameters: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        values = _strings(self.missing_parameters, "missing_parameters")
+        if len(set(values)) != len(values):
+            raise ValueError("missing parameter names must be unique")
+        object.__setattr__(self, "missing_parameters", values)
 
 
 @dataclass(frozen=True)
