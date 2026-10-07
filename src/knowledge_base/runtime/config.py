@@ -1,9 +1,9 @@
 """Runtime configuration validation only; no sufficiency decisions or env reads."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from .models import _nonempty, _positive_int, _score
+from .models import GenerationLimits, _nonempty, _positive_int, _score
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,14 @@ class RuntimeConfig:
     dense_threshold: ScoreThreshold | None = None
     reranker_threshold: ScoreThreshold | None = None
     unconfigured_threshold_policy: str = "skip"
+    generation_limits: GenerationLimits = field(default_factory=GenerationLimits)
+    citation_failure_action: str = "error"
 
     def __post_init__(self):
+        if not isinstance(self.generation_limits, GenerationLimits):
+            raise ValueError("generation_limits must be GenerationLimits")
+        if self.citation_failure_action not in ("error", "escalate"):
+            raise ValueError("citation_failure_action must be error or escalate")
         if self.unconfigured_threshold_policy not in ("skip", "require"):
             raise ValueError("unconfigured_threshold_policy must be skip or require")
         for name in ("candidate_top_k", "final_top_k", "context_max_chars", "minimum_evidence_count"):

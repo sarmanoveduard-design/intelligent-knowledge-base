@@ -449,10 +449,16 @@ class GenerationRequest:
     output_schema_version: str
     language: str | None = None
     limits: GenerationLimits = field(default_factory=GenerationLimits)
+    instructions: str = ""
+    request_id: str | None = None
 
     def __post_init__(self):
         for name in ("question", "prompt_version", "output_schema_version"):
             _nonempty(getattr(self, name), name)
+        if not isinstance(self.instructions, str):
+            raise ValueError("instructions must be a string")
+        if self.request_id is not None:
+            _nonempty(self.request_id, "request_id")
         if self.language is not None:
             _nonempty(self.language, "language")
 
@@ -486,12 +492,14 @@ class CitationValidationResult:
     semantic_support: SemanticSupport = SemanticSupport.NOT_CHECKED
     resolved_citations: tuple[CitationReference, ...] = ()
     errors: tuple[str, ...] = ()
+    diagnostics: Metadata = field(default_factory=dict)
 
     def __post_init__(self):
         _enum(self.structural_validity, StructuralValidity)
         _enum(self.semantic_support, SemanticSupport)
         object.__setattr__(self, "resolved_citations", tuple(self.resolved_citations))
         object.__setattr__(self, "errors", _strings(self.errors, "errors"))
+        object.__setattr__(self, "diagnostics", _metadata(self.diagnostics))
         if self.structural_validity == StructuralValidity.PASS and self.errors:
             raise ValueError("structural PASS cannot contain errors")
 
@@ -521,6 +529,8 @@ class AskResult:
     citation_validation: CitationValidationResult | None = None
     escalation_id: str | None = None
     diagnostics: Metadata = field(default_factory=dict)
+    declared_limitations: tuple[str, ...] = ()
+    missing_information: tuple[str, ...] = ()
 
     def __post_init__(self):
         _nonempty(self.request_id, "request_id")
@@ -534,6 +544,8 @@ class AskResult:
         if self.state == AnswerState.ESCALATE_EXPERT and self.escalation_id is None:
             raise ValueError("expert escalation state requires escalation_id")
         object.__setattr__(self, "diagnostics", _metadata(self.diagnostics))
+        object.__setattr__(self, "declared_limitations", _strings(self.declared_limitations, "declared_limitations"))
+        object.__setattr__(self, "missing_information", _strings(self.missing_information, "missing_information"))
 
 
 @dataclass(frozen=True)
@@ -549,6 +561,7 @@ class ExpertEscalation:
     retrieval_diagnostics: Metadata = field(default_factory=dict)
     draft: GenerationDraft | None = None
     status: EscalationStatus = EscalationStatus.PENDING
+    sufficiency_diagnostics: Metadata = field(default_factory=dict)
 
     def __post_init__(self):
         for name in ("escalation_id", "request_id", "question", "reason"):
@@ -558,6 +571,7 @@ class ExpertEscalation:
         _enum(self.status, EscalationStatus)
         object.__setattr__(self, "missing_information", _strings(self.missing_information, "missing_information"))
         object.__setattr__(self, "retrieval_diagnostics", _metadata(self.retrieval_diagnostics))
+        object.__setattr__(self, "sufficiency_diagnostics", _metadata(self.sufficiency_diagnostics))
 
 
 @dataclass(frozen=True)

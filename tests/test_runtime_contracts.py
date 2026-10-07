@@ -226,7 +226,9 @@ with patch.object(builtins, "open", forbidden), patch.object(pathlib.Path, "open
     for name in ("knowledge_base.runtime", "knowledge_base.runtime.models", "knowledge_base.runtime.config", "knowledge_base.runtime.protocols",
                  "knowledge_base.runtime.storage", "knowledge_base.runtime.ingestion",
                  "knowledge_base.runtime.vector_index", "knowledge_base.runtime.indexing", "knowledge_base.runtime.retrieval",
-                 "knowledge_base.runtime.context", "knowledge_base.runtime.sufficiency"):
+                 "knowledge_base.runtime.context", "knowledge_base.runtime.sufficiency",
+                 "knowledge_base.runtime.generation", "knowledge_base.runtime.citations",
+                 "knowledge_base.runtime.policy", "knowledge_base.runtime.ask"):
         importlib.import_module(name)
 '''
         result = subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT,
@@ -250,7 +252,7 @@ with patch.object(builtins, "open", forbidden), patch.object(pathlib.Path, "open
                         self.assertIn(node.module.split(".")[0], sys.stdlib_module_names, path.name)
                 elif isinstance(node, ast.ImportFrom):
                     self.assertEqual(node.level, 1)
-                    self.assertIn(node.module, {"models", "config", "protocols", "storage", "ingestion", "vector_index", "indexing", "retrieval", "context", "sufficiency"})
+                    self.assertIn(node.module, {"models", "config", "protocols", "storage", "ingestion", "vector_index", "indexing", "retrieval", "context", "sufficiency", "generation", "citations", "policy", "ask"})
 
     def test_runtime_contains_no_fixed_provider_or_domain_literals(self):
         prohibited = {"MAIN119", "TEAM HOLDOUT", "MOST", "legal", "medical", "company", "laboratory",
