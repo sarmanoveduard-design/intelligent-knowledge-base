@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -19,7 +19,7 @@ from typing import Protocol, Sequence
 
 from .models import (
     AccessContext, ChunkIdentity, DocumentIdentity, DocumentVersionIdentity,
-    DocumentVersionStatus, EvidenceChunk, Metadata, ProcessingSnapshotIdentity,
+    DocumentVersionStatus, EvidenceChunk, IndexIdentity, IndexManifest, Metadata, ProcessingSnapshotIdentity,
     ProcessingState, RetrievalFilters, RuntimeDocument, RuntimeDocumentVersion,
     SourceCoordinates, _metadata, _nonempty, compose_retrieval_filters,
 )
@@ -113,7 +113,13 @@ CREATE TABLE IF NOT EXISTS chunks (
     created_at TEXT NOT NULL,
     UNIQUE (snapshot_id, ordinal)
 );
-PRAGMA user_version = 1;
+CREATE TABLE IF NOT EXISTS index_manifests (
+    snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    index_identity TEXT NOT NULL,
+    chunk_count INTEGER NOT NULL CHECK (chunk_count > 0),
+    PRIMARY KEY (snapshot_id, index_identity)
+);
+PRAGMA user_version = 2;
 COMMIT;
 """
 
@@ -183,7 +189,7 @@ class SQLiteRepository:
             self.connection.row_factory = sqlite3.Row
             self.connection.execute('PRAGMA foreign_keys = ON')
             schema_version = self.connection.execute('PRAGMA user_version').fetchone()[0]
-            if schema_version not in (0, 1):
+            if schema_version not in (0, 1, 2):
                 raise StorageError('unsupported_schema_version')
             self.connection.executescript(_SCHEMA)
         except (sqlite3.Error, StorageError):
@@ -401,6 +407,36 @@ class SQLiteRepository:
     def get_current_snapshot(self, version: DocumentVersionIdentity) -> ProcessingSnapshotIdentity | None:
         row = self._require_version(version)
         return ProcessingSnapshotIdentity(version, row['current_snapshot_id']) if row['current_snapshot_id'] else None
+
+    def get_index_manifest(
+        self, snapshot: ProcessingSnapshotIdentity, identity: IndexIdentity,
+    ) -> IndexManifest | None:
+        row = self._execute('''SELECT m.chunk_count FROM index_manifests m
+            JOIN snapshots s ON s.snapshot_id=m.snapshot_id
+            WHERE s.snapshot_id=? AND s.document_id=? AND s.version_id=? AND m.index_identity=?''',
+            (snapshot.processing_snapshot_id, snapshot.version.document_id,
+             snapshot.version.version_id, _dump(asdict(identity)))).fetchone()
+        return IndexManifest(identity, snapshot, row['chunk_count'], ready=True) if row else None
+
+    def complete_indexing(self, manifest: IndexManifest) -> None:
+        if not manifest.ready or manifest.chunk_count < 1:
+            raise StorageError('index_not_ready')
+        with self._transaction():
+            row = self._require_version(manifest.snapshot.version)
+            if row['status'] not in ('draft', 'active') or row['processing_state'] not in ('chunked', 'indexed'):
+                raise StorageError('invalid_indexing_state')
+            self._require_prepared(row)
+            if row['current_snapshot_id'] != manifest.snapshot.processing_snapshot_id:
+                raise StorageError('index_snapshot_mismatch')
+            if len(self.list_snapshot(manifest.snapshot)) != manifest.chunk_count:
+                raise StorageError('index_count_mismatch')
+            self._execute('''INSERT INTO index_manifests(snapshot_id,index_identity,chunk_count)
+                VALUES (?,?,?) ON CONFLICT(snapshot_id,index_identity)
+                DO UPDATE SET chunk_count=excluded.chunk_count''',
+                (manifest.snapshot.processing_snapshot_id, _dump(asdict(manifest.identity)), manifest.chunk_count))
+            self._execute('''UPDATE versions SET processing_state='indexed'
+                WHERE document_id=? AND version_id=?''',
+                (manifest.snapshot.version.document_id, manifest.snapshot.version.version_id))
 
     def _save_snapshot(self, snapshot, chunks, metadata):
         version = self._require_version(snapshot.version)

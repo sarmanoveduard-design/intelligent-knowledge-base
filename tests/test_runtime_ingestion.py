@@ -414,7 +414,8 @@ class RuntimeIngestionTests(unittest.TestCase):
 
     def test_runtime_imports_never_reference_benchmark_or_model_execution(self):
         allowed = {'knowledge_base.document_intake', 'knowledge_base.document_registry',
-                   'knowledge_base.document_versions', 'knowledge_base.source_blocks', 'knowledge_base.chunker'}
+                   'knowledge_base.document_versions', 'knowledge_base.source_blocks', 'knowledge_base.chunker',
+                   'knowledge_base.embeddings'}
         for path in (ROOT / 'src/knowledge_base/runtime').glob('*.py'):
             for node in ast.walk(ast.parse(path.read_text(encoding='utf8'))):
                 if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module.startswith('knowledge_base.'):

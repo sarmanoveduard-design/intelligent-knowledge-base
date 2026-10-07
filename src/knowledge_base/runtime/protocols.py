@@ -80,6 +80,25 @@ class ChunkRepository(Protocol):
 
 
 @runtime_checkable
+class IndexingRepository(DocumentRepository, ChunkRepository, Protocol):
+    """Registry extension for atomic indexing completion and durable manifests."""
+    def get_current_snapshot(self, version: DocumentVersionIdentity) -> ProcessingSnapshotIdentity | None: ...
+
+    def get_index_manifest(
+        self, snapshot: ProcessingSnapshotIdentity, identity: IndexIdentity,
+    ) -> IndexManifest | None: ...
+
+    def complete_indexing(self, manifest: IndexManifest) -> None:
+        """Atomically persist a ready manifest and mark the selected version INDEXED.
+
+        Verify selected snapshot/count and DRAFT or ACTIVE + CHUNKED/INDEXED
+        under the write transaction. Archived/superseded versions must fail.
+        Call only after VectorIndex confirms complete-snapshot readiness.
+        """
+        ...
+
+
+@runtime_checkable
 class VectorIndex(Protocol):
     @property
     def identity(self) -> IndexIdentity: ...
