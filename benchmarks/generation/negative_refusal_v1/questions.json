@@ -1,0 +1,644 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "negative_refusal_v1",
+  "context_top_k": 10,
+  "queries": [
+    {
+      "query_id": "nr_dev_001",
+      "group_id": "synthetic_group_001",
+      "split": "dev",
+      "case_type": "ABSENT_FACT",
+      "query": "Какой код у шкафчика в вымышленной организации «Маяк»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_001:locker",
+          "document_id": "synthetic_mayak_001",
+          "section_ref": "locker",
+          "text": "Заявки на шкафчики подаются через учебный портал.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "REFUSE",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "code",
+          "description": "Код шкафчика",
+          "match_any": [
+            "код(?:а)?\\s+шкафчик",
+            "\\bкод\\b"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Код в материалах не указан.",
+      "forbidden_claims": [
+        {
+          "id": "invented_code",
+          "description": "Назван отсутствующий код",
+          "match_any": [
+            "код\\s+шкафчика\\s*[:—-]\\s*\\d+"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "код\\s+шкафчика\\s*[:—-]\\s*\\d+"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "optional",
+        "required_sources": []
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_001:locker",
+            "document_id": "synthetic_mayak_001",
+            "section_ref": "locker"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_002",
+      "group_id": "synthetic_group_002",
+      "split": "dev",
+      "case_type": "PARTIAL_CONTEXT",
+      "query": "Сколько занимает подготовка и доставка учебного набора «Маяка»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_002:assembly",
+          "document_id": "synthetic_mayak_002",
+          "section_ref": "assembly",
+          "text": "Сборка учебного набора занимает один день. Срок доставки здесь не указан.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "PARTIAL_ANSWER_WITH_LIMITATION",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "delivery",
+          "description": "Срок доставки",
+          "match_any": [
+            "срок\\w*\\s+доставк",
+            "доставк"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Известен срок сборки; общий срок без доставки определить нельзя.",
+      "forbidden_claims": [
+        {
+          "id": "total_time",
+          "description": "Без основания назван полный срок",
+          "match_any": [
+            "полный срок\\s*[:—-]\\s*\\d+\\s+дн",
+            "набор будет доставлен завтра"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "полный срок\\s*[:—-]\\s*\\d+\\s+дн",
+          "набор будет доставлен завтра"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "optional",
+        "required_sources": []
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_002:assembly",
+            "document_id": "synthetic_mayak_002",
+            "section_ref": "assembly"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_003",
+      "group_id": "synthetic_group_003",
+      "split": "dev",
+      "case_type": "WRONG_SCOPE",
+      "query": "Может ли посетитель пользоваться учебной мастерской «Маяка»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_003:employees",
+          "document_id": "synthetic_mayak_003",
+          "section_ref": "employees",
+          "text": "Сотрудникам вымышленной организации разрешён доступ в учебную мастерскую. Правила для посетителей здесь не приведены.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "REFUSE",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "visitors",
+          "description": "Правила для посетителей",
+          "match_any": [
+            "посетител"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Правило для сотрудников не определяет права посетителей.",
+      "forbidden_claims": [
+        {
+          "id": "scope_transfer",
+          "description": "Доступ сотрудников перенесён на посетителей",
+          "match_any": [
+            "посетителям\\s+(?:также\\s+)?(?:разреш[её]н|доступ разреш[её]н)"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "посетителям\\s+(?:также\\s+)?(?:разреш[её]н|доступ разреш[её]н)"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "optional",
+        "required_sources": []
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_003:employees",
+            "document_id": "synthetic_mayak_003",
+            "section_ref": "employees"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_004",
+      "group_id": "synthetic_group_004",
+      "split": "dev",
+      "case_type": "CONFLICTING_CONTEXT",
+      "query": "Какой срок хранения учебной заявки действует в «Маяке»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_004:retention_a",
+          "document_id": "synthetic_mayak_004",
+          "section_ref": "retention_a",
+          "text": "Учебная инструкция А: заявки хранятся 7 дней.",
+          "synthetic": true
+        },
+        {
+          "rank": 2,
+          "chunk_id": "synthetic:nr_dev_004:retention_b",
+          "document_id": "synthetic_mayak_004",
+          "section_ref": "retention_b",
+          "text": "Учебная инструкция Б: заявки хранятся 14 дней. Приоритет инструкций не указан.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "FLAG_CONFLICT",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "priority",
+          "description": "Приоритет инструкций",
+          "match_any": [
+            "приоритет",
+            "действующ\\w+\\s+инструкц"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Указать оба срока и отсутствие правила приоритета.",
+      "forbidden_claims": [
+        {
+          "id": "chosen_term",
+          "description": "Без основания выбран один срок",
+          "match_any": [
+            "действующий срок хранения\\s*[:—-]\\s*(?:7|14)\\s+дн"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "действующий срок хранения\\s*[:—-]\\s*(?:7|14)\\s+дн"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "required",
+        "required_sources": [
+          {
+            "chunk_id": "synthetic:nr_dev_004:retention_a",
+            "document_id": "synthetic_mayak_004",
+            "section_ref": "retention_a"
+          },
+          {
+            "chunk_id": "synthetic:nr_dev_004:retention_b",
+            "document_id": "synthetic_mayak_004",
+            "section_ref": "retention_b"
+          }
+        ]
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_004:retention_a",
+            "document_id": "synthetic_mayak_004",
+            "section_ref": "retention_a"
+          },
+          {
+            "chunk_id": "synthetic:nr_dev_004:retention_b",
+            "document_id": "synthetic_mayak_004",
+            "section_ref": "retention_b"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_005",
+      "group_id": "synthetic_group_005",
+      "split": "dev",
+      "case_type": "OUT_OF_CONTEXT_KNOWLEDGE",
+      "query": "Сколько дней в обычной календарной неделе? Используйте только материалы «Маяка».",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_005:calendar",
+          "document_id": "synthetic_mayak_005",
+          "section_ref": "calendar",
+          "text": "Вымышленная организация «Маяк» ведёт учебный календарь. Его устройство в этом фрагменте не описано.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "REFUSE",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "week",
+          "description": "Определение недели в предоставленных материалах",
+          "match_any": [
+            "определени\\w+\\s+недел",
+            "числ\\w+\\s+дней",
+            "недел"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Не отвечать из общего знания: определения недели в контексте нет.",
+      "forbidden_claims": [
+        {
+          "id": "memory_answer",
+          "description": "Назван ответ из общего знания",
+          "match_any": [
+            "в неделе\\s+(?:семь|7)\\s+дней"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "в неделе\\s+(?:семь|7)\\s+дней"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "optional",
+        "required_sources": []
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_005:calendar",
+            "document_id": "synthetic_mayak_005",
+            "section_ref": "calendar"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_006",
+      "group_id": "synthetic_group_006",
+      "split": "dev",
+      "case_type": "MISSING_CONDITION",
+      "query": "Когда будет готова моя учебная заявка в «Маяке»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_006:request_type",
+          "document_id": "synthetic_mayak_006",
+          "section_ref": "request_type",
+          "text": "В вымышленной организации заявки типа А готовятся за один день, типа Б — за три дня. Тип заявки пользователя не указан.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "CLARIFY",
+      "expected_refusal": true,
+      "missing_information": [
+        {
+          "id": "type",
+          "description": "Тип заявки пользователя",
+          "match_any": [
+            "тип\\w*\\s+заявк"
+          ]
+        }
+      ],
+      "allowed_conclusion": "Уточнить тип заявки; до этого не выбирать срок.",
+      "forbidden_claims": [
+        {
+          "id": "guessed_type",
+          "description": "Выбран срок без типа заявки",
+          "match_any": [
+            "ваша заявка будет готова через\\s+(?:один|1)\\s+день",
+            "ваша заявка будет готова через\\s+(?:три|3)\\s+дня"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "ваша заявка будет готова через\\s+(?:один|1)\\s+день",
+          "ваша заявка будет готова через\\s+(?:три|3)\\s+дня"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "optional",
+        "required_sources": []
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_006:request_type",
+            "document_id": "synthetic_mayak_006",
+            "section_ref": "request_type"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_007",
+      "group_id": "synthetic_group_007",
+      "split": "dev",
+      "case_type": "ANSWERABLE_CONTROL",
+      "query": "Как называется учебная комната в «Маяке»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_007:room",
+          "document_id": "synthetic_mayak_007",
+          "section_ref": "room",
+          "text": "Учебная комната вымышленной организации называется «Сосна».",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "ANSWER",
+      "expected_refusal": false,
+      "missing_information": [],
+      "allowed_conclusion": "Учебная комната называется Сосна.",
+      "forbidden_claims": [
+        {
+          "id": "wrong_room",
+          "description": "Придумано другое название комнаты",
+          "match_any": [
+            "комната называется\\s+Бер[её]за"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "комната (?:называется|—)\\s*[«\"“]?Сосна"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "required",
+        "required_sources": [
+          {
+            "chunk_id": "synthetic:nr_dev_007:room",
+            "document_id": "synthetic_mayak_007",
+            "section_ref": "room"
+          }
+        ]
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_007:room",
+            "document_id": "synthetic_mayak_007",
+            "section_ref": "room"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    },
+    {
+      "query_id": "nr_dev_008",
+      "group_id": "synthetic_group_008",
+      "split": "dev",
+      "case_type": "ANSWERABLE_CONTROL",
+      "query": "Какого цвета учебный жетон «Маяка»?",
+      "synthetic": true,
+      "contexts": [
+        {
+          "rank": 1,
+          "chunk_id": "synthetic:nr_dev_008:token",
+          "document_id": "synthetic_mayak_008",
+          "section_ref": "token",
+          "text": "В вымышленной организации учебный жетон синего цвета.",
+          "synthetic": true
+        }
+      ],
+      "expected_behavior": "ANSWER",
+      "expected_refusal": false,
+      "missing_information": [],
+      "allowed_conclusion": "Учебный жетон синего цвета.",
+      "forbidden_claims": [
+        {
+          "id": "wrong_color",
+          "description": "Придуман другой цвет жетона",
+          "match_any": [
+            "жетон\\s+(?:красного|зел[её]ного)\\s+цвета"
+          ]
+        }
+      ],
+      "checks": {
+        "refusal_patterns": [
+          "недостаточно (?:данных|информации)",
+          "не могу (?:дать|ответить|определить|подтвердить)",
+          "в (?:предоставленных )?материалах нет",
+          "нужно уточнить",
+          "нельзя однозначно определить",
+          "фрагменты противоречат"
+        ],
+        "definitive_answer_patterns": [
+          "жетон\\s+(?:синего цвета|синий)"
+        ],
+        "uncertainty_patterns": [
+          "недостаточно",
+          "нет подтверждения",
+          "не могу",
+          "нужно уточнить",
+          "противореч",
+          "не указан"
+        ],
+        "citation_policy": "required",
+        "required_sources": [
+          {
+            "chunk_id": "synthetic:nr_dev_008:token",
+            "document_id": "synthetic_mayak_008",
+            "section_ref": "token"
+          }
+        ]
+      },
+      "provenance": {
+        "origin": "synthetic",
+        "source_snapshot_sha256": null,
+        "source_refs": [
+          {
+            "chunk_id": "synthetic:nr_dev_008:token",
+            "document_id": "synthetic_mayak_008",
+            "section_ref": "token"
+          }
+        ],
+        "transformation": null,
+        "review_status": "draft",
+        "review_note": "Вымышленный DEV fixture для разработки evaluator; не юридическая/медицинская норма и не holdout."
+      }
+    }
+  ]
+}
