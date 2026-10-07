@@ -47,10 +47,12 @@ class DocumentRepository(Protocol):
     def activate_version(
         self, identity: DocumentVersionIdentity, *, expected_current_version_id: str | None,
     ) -> None:
-        """Atomically publish a ready approved version and supersede the old one.
+        """Atomically approve/publish a prepared version and supersede the old one.
 
         Compare current identity with expected_current_version_id; None means
-        expect no current version. Reject archived versions or concurrent edits.
+        expect no current version. Reject archived/superseded versions or concurrent edits.
+        Prepared CHUNKED versions can be published before indexing; retrieval
+        visibility still requires INDEXED. Activation is an explicit approval.
         """
         ...
 

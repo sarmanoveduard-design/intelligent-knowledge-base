@@ -104,12 +104,12 @@ class FakeDocuments:
                         and v.status == DocumentVersionStatus.ACTIVE), None)
         if (current.identity.version_id if current else None) != expected_current_version_id:
             raise ValueError("concurrent publication")
-        if (target.status == DocumentVersionStatus.ARCHIVED or not target.approved
-                or target.processing_state != ProcessingState.INDEXED):
+        if (target.status not in (DocumentVersionStatus.DRAFT, DocumentVersionStatus.ACTIVE)
+                or target.processing_state not in (ProcessingState.CHUNKED, ProcessingState.INDEXED)):
             raise ValueError("version cannot be published")
         if current is not None:
             self.versions[current.identity] = replace(current, status=DocumentVersionStatus.SUPERSEDED)
-        self.versions[identity] = replace(target, status=DocumentVersionStatus.ACTIVE)
+        self.versions[identity] = replace(target, status=DocumentVersionStatus.ACTIVE, approved=True)
 
     def archive_version(self, identity: DocumentVersionIdentity) -> None:
         self.versions[identity] = replace(self.versions[identity], status=DocumentVersionStatus.ARCHIVED)
@@ -204,7 +204,7 @@ class FakeEscalations:
 class RuntimeContractsTests(unittest.TestCase):
     def test_import_all_runtime_modules_without_io_network_processes_or_providers(self):
         code = r'''
-import builtins, dataclasses, datetime, enum, importlib, importlib.abc, math, pathlib, socket, subprocess, sys, types, typing
+import builtins, dataclasses, datetime, enum, importlib, importlib.abc, math, pathlib, socket, sqlite3, subprocess, sys, types, typing
 from unittest.mock import patch
 import knowledge_base
 class RejectExternal(importlib.abc.MetaPathFinder):
@@ -222,8 +222,9 @@ with patch.object(builtins, "open", forbidden), patch.object(pathlib.Path, "open
      patch.object(pathlib.Path, "read_text", forbidden), patch.object(pathlib.Path, "read_bytes", forbidden), \
      patch.object(pathlib.Path, "write_text", forbidden), patch.object(pathlib.Path, "write_bytes", forbidden), \
      patch.object(pathlib.Path, "mkdir", forbidden), patch.object(socket, "socket", forbidden), \
-     patch.object(subprocess, "Popen", forbidden):
-    for name in ("knowledge_base.runtime", "knowledge_base.runtime.models", "knowledge_base.runtime.config", "knowledge_base.runtime.protocols"):
+     patch.object(subprocess, "Popen", forbidden), patch.object(sqlite3, "connect", forbidden):
+    for name in ("knowledge_base.runtime", "knowledge_base.runtime.models", "knowledge_base.runtime.config", "knowledge_base.runtime.protocols",
+                 "knowledge_base.runtime.storage", "knowledge_base.runtime.ingestion"):
         importlib.import_module(name)
 '''
         result = subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT,
@@ -231,7 +232,7 @@ with patch.object(builtins, "open", forbidden), patch.object(pathlib.Path, "open
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_runtime_import_graph_is_standard_library_or_runtime_only(self):
+    def test_runtime_import_graph_uses_only_explicit_production_dependencies(self):
         for path in RUNTIME.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf8"))
             for node in ast.walk(tree):
@@ -239,10 +240,14 @@ with patch.object(builtins, "open", forbidden), patch.object(pathlib.Path, "open
                     for alias in node.names:
                         self.assertIn(alias.name.split(".")[0], sys.stdlib_module_names, path.name)
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:
-                    self.assertIn(node.module.split(".")[0], sys.stdlib_module_names, path.name)
+                    if node.module.startswith("knowledge_base."):
+                        self.assertIn(node.module, {"knowledge_base.document_intake", "knowledge_base.document_registry",
+                            "knowledge_base.document_versions", "knowledge_base.source_blocks", "knowledge_base.chunker"}, path.name)
+                    else:
+                        self.assertIn(node.module.split(".")[0], sys.stdlib_module_names, path.name)
                 elif isinstance(node, ast.ImportFrom):
                     self.assertEqual(node.level, 1)
-                    self.assertIn(node.module, {"models", "config", "protocols"})
+                    self.assertIn(node.module, {"models", "config", "protocols", "storage", "ingestion"})
 
     def test_runtime_contains_no_fixed_provider_or_domain_literals(self):
         prohibited = {"MAIN119", "TEAM HOLDOUT", "MOST", "legal", "medical", "company", "laboratory",
